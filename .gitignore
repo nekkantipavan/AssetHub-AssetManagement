@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Environment variables — contains credentials, DO NOT COMMIT
+.env
+**/.env
+
+# Build output — regenerate with: npm run build
+dist/
+
+# Logs
+*.log
+server/server.err.log
+server/server.out.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
