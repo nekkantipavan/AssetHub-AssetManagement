@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { Save, CheckCircle, AlertCircle, Info, ShieldCheck } from 'lucide-react'
 import { getRolePermissions, updateRolePermissions } from '../data/api'
 import { useAuth } from '../context/AuthContext'
@@ -166,9 +166,9 @@ export default function RoleManagement() {
           </thead>
           <tbody>
             {PAGE_GROUPS.map(({ section, pages }) => (
-              <>
+              <Fragment key={section}>
                 {/* Section header row */}
-                <tr key={`sec-${section}`} className="bg-cream-50/60 dark:bg-gray-750/40">
+                <tr className="bg-cream-50/60 dark:bg-gray-750/40">
                   <td colSpan={3} className="px-5 py-2">
                     <span className="text-xs font-semibold text-ink-300 dark:text-gray-500 uppercase tracking-wider">
                       {section}
@@ -194,7 +194,7 @@ export default function RoleManagement() {
                     ))}
                   </tr>
                 ))}
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>

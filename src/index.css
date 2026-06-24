@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 @layer base {
+  html { font-size: 90%; }
   * { box-sizing: border-box; }
   body {
     font-family: 'Inter', sans-serif;
