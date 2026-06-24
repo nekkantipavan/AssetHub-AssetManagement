@@ -18,7 +18,7 @@ export function Thead({ children }) {
 
 export function Th({ children, className }) {
   return (
-    <th className={clsx('px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap', className)}>
+    <th className={clsx('px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap', className)}>
       {children}
     </th>
   )
@@ -41,7 +41,7 @@ export function Tr({ children, onClick, className }) {
 
 export function Td({ children, className }) {
   return (
-    <td className={clsx('px-4 py-3 text-sm text-ink-700 whitespace-nowrap', className)}>
+    <td className={clsx('px-4 py-2.5 text-sm text-ink-700 whitespace-nowrap', className)}>
       {children}
     </td>
   )

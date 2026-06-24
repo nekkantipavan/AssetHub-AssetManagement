@@ -6,12 +6,47 @@ const jwt     = require('jsonwebtoken')
 require('dotenv').config()
 const { sendHtml, buildApprovalEmail, buildReturnApprovalEmail, buildApprovalResultHtml, buildChallanTable } = require('./emailService')
 const crypto = require('crypto')
- 
+
 const app        = express()
-app.use(express.json()); 
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 const JWT_SECRET = process.env.JWT_SECRET || 'assethub_secret_key'
 const PORT       = process.env.PORT || 3001
+
+// ── Startup migration: role_permissions table ────────────────
+;(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS role_permissions (
+        id         SERIAL       PRIMARY KEY,
+        role       VARCHAR(50)  NOT NULL,
+        page       VARCHAR(100) NOT NULL,
+        access     VARCHAR(10)  NOT NULL DEFAULT 'false',
+        updated_at TIMESTAMP    DEFAULT NOW(),
+        UNIQUE(role, page)
+      )
+    `)
+    const seed = [
+      ['Manager','dashboard','true'],['Manager','assets','true'],['Manager','bulk-upload','true'],
+      ['Manager','transfer','true'],['Manager','plants','view'],['Manager','departments','view'],
+      ['Manager','masters','view'],['Manager','email-masters','false'],['Manager','reports','true'],
+      ['Manager','users','view'],['Manager','audit-logs','false'],
+      ['User','dashboard','true'],['User','assets','view'],['User','bulk-upload','false'],
+      ['User','transfer','view'],['User','plants','false'],['User','departments','false'],
+      ['User','masters','false'],['User','email-masters','false'],['User','reports','false'],
+      ['User','users','false'],['User','audit-logs','false'],
+    ]
+    for (const [role, page, access] of seed) {
+      await pool.query(
+        `INSERT INTO role_permissions (role, page, access) VALUES ($1,$2,$3) ON CONFLICT (role, page) DO NOTHING`,
+        [role, page, access]
+      )
+    }
+    console.log('✓ role_permissions table ready')
+  } catch (err) {
+    console.error('Migration error:', err.message)
+  }
+})()
  
 
 app.use(cors({
@@ -2106,6 +2141,46 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
       pendingTransfers: transfers.rows[0].count,
       activePlants:     plants.rows[0].count,
     })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+// ════════════════════════════════════════════════════════════
+// ROLE PERMISSIONS
+// ════════════════════════════════════════════════════════════
+
+app.get('/api/role-permissions', authMiddleware, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT role, page, access FROM role_permissions ORDER BY role, page')
+    const result = {}
+    for (const row of r.rows) {
+      if (!result[row.role]) result[row.role] = {}
+      result[row.role][row.page] = row.access
+    }
+    res.json(result)
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.put('/api/role-permissions', authMiddleware, requireRole('Admin'), async (req, res) => {
+  try {
+    const { permissions } = req.body
+    if (!permissions || typeof permissions !== 'object')
+      return res.status(400).json({ error: 'Invalid permissions payload' })
+
+    for (const [role, pages] of Object.entries(permissions)) {
+      if (role === 'Admin') continue
+      if (!['Manager', 'User'].includes(role)) continue
+      for (const [page, access] of Object.entries(pages)) {
+        if (!['true', 'view', 'false'].includes(String(access))) continue
+        await pool.query(
+          `INSERT INTO role_permissions (role, page, access, updated_at)
+           VALUES ($1,$2,$3,NOW())
+           ON CONFLICT (role, page) DO UPDATE SET access = EXCLUDED.access, updated_at = NOW()`,
+          [role, page, String(access)]
+        )
+      }
+    }
+    await writeAudit(req.user.id, 'Permissions Updated', 'System', 'Role permissions updated by admin', req.ip)
+    res.json({ message: 'Permissions saved successfully' })
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 

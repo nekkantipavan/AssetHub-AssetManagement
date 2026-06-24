@@ -21,6 +21,7 @@ import Users              from './pages/Users'
 import AuditLogs          from './pages/AuditLogs'
 import AssetReport        from './pages/AssetReport'
 import TransferReport     from './pages/TransferReport'
+import RoleManagement     from './pages/RoleManagement'
 
 // Pages that go inside the Layout (sidebar + header)
 const pages = [
@@ -36,9 +37,10 @@ const pages = [
   { path:'masters',     element:<MastersManagement />, page:'departments' },
   { path:'email-masters',element:<EmailMasters />,     page:'users'       },
   { path:'users',       element:<Users />,             page:'users'       },
-  { path:'audit-logs',        element:<AuditLogs />,       page:'audit-logs' },
-  { path:'reports/assets',    element:<AssetReport />,     page:'reports'    },
-  { path:'reports/transfers', element:<TransferReport />,  page:'reports'    },
+  { path:'audit-logs',        element:<AuditLogs />,        page:'audit-logs'      },
+  { path:'reports/assets',    element:<AssetReport />,      page:'reports'         },
+  { path:'reports/transfers', element:<TransferReport />,   page:'reports'         },
+  { path:'role-management',   element:<RoleManagement />,   page:'role-management' },
 ]
 
 function PasswordGuard({ children }) {

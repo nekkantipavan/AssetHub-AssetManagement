@@ -52,20 +52,20 @@ export default function Login() {
       <div className="absolute inset-0 bg-white/40 backdrop-blur-[2px]" />
 
       {/* ── Centered login card ── */}
-      <div className="relative z-10 w-full max-w-md bg-white dark:bg-gray-900 rounded-3xl shadow-2xl p-8">
+      <div className="relative z-10 w-full max-w-md bg-white dark:bg-gray-900 rounded-3xl shadow-2xl p-6">
         <div className="w-full">
 
           {/* Logo */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-3xl bg-orange-gradient shadow-medium mb-4">
-              <Box size={32} className="text-white" strokeWidth={2.5}/>
+          <div className="text-center mb-6">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-orange-gradient shadow-medium mb-3">
+              <Box size={28} className="text-white" strokeWidth={2.5}/>
             </div>
-            <h1 className="text-2xl font-bold dark:text-white">AssetHub</h1>
+            <h1 className="text-xl font-bold dark:text-white">AssetHub</h1>
             <p className="text-sm text-ink-400 mt-1">Asset Management System</p>
           </div>
 
-          <h2 className="text-lg font-bold dark:text-white mb-1">Welcome back</h2>
-          <p className="text-sm text-ink-400 mb-6">Sign in to your account</p>
+          <h2 className="text-base font-bold dark:text-white mb-1">Welcome back</h2>
+          <p className="text-sm text-ink-400 mb-5">Sign in to your account</p>
 
           {/* Error banner */}
           {isError && (
@@ -94,7 +94,7 @@ export default function Login() {
                   onChange={e => { setUsername(e.target.value); setError('') }}
                   placeholder="Enter username"
                   autoComplete="username"
-                  className={`w-full pl-10 pr-4 py-3 rounded-2xl text-sm outline-none border-2 transition-all
+                  className={`w-full pl-10 pr-4 py-2.5 rounded-xl text-sm outline-none border-2 transition-all
                     ${isError
                       ? 'bg-red-50 border-red-300 text-red-900 placeholder-red-300 focus:border-red-400'
                       : 'bg-cream-100 dark:bg-gray-800 dark:text-white border-transparent focus:border-brand-300 focus:bg-white dark:focus:bg-gray-700'}`}
@@ -119,7 +119,7 @@ export default function Login() {
                   onChange={e => { setPassword(e.target.value); setError('') }}
                   placeholder="Enter password"
                   autoComplete="current-password"
-                  className={`w-full pl-10 pr-10 py-3 rounded-2xl text-sm outline-none border-2 transition-all
+                  className={`w-full pl-10 pr-10 py-2.5 rounded-xl text-sm outline-none border-2 transition-all
                     ${isError
                       ? 'bg-red-50 border-red-300 text-red-900 placeholder-red-300 focus:border-red-400'
                       : 'bg-cream-100 dark:bg-gray-800 dark:text-white border-transparent focus:border-brand-300 focus:bg-white dark:focus:bg-gray-700'}`}
@@ -139,7 +139,7 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-orange-gradient text-white rounded-2xl font-semibold
+              className="w-full py-2.5 bg-orange-gradient text-white rounded-xl font-semibold
                          hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60 mt-2"
             >
               {loading ? 'Signing in…' : 'Sign In'}
@@ -148,7 +148,7 @@ export default function Login() {
           </form>
 
           {/* Contact info */}
-          <div className="mt-6 bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 flex items-start gap-2.5 text-xs text-amber-700">
+          <div className="mt-5 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 flex items-start gap-2.5 text-xs text-amber-700">
             <AlertCircle size={14} className="mt-0.5 flex-shrink-0"/>
             <p>Contact Administrator for credentials</p>
           </div>

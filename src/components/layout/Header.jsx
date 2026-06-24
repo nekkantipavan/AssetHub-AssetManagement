@@ -15,8 +15,9 @@ const pageTitles = {
   '/departments':        { title:'Departments',     sub:'Manage departments'          },
   '/users':              { title:'Users',           sub:'Manage system users'         },
   '/audit-logs':         { title:'Audit Logs',      sub:'Track all system activity'   },
-  '/reports/assets':     { title:'Asset Report',    sub:'Asset inventory report'      },
-  '/reports/transfers':  { title:'Transfer Report', sub:'Transfer records report'     },
+  '/reports/assets':     { title:'Asset Report',      sub:'Asset inventory report'      },
+  '/reports/transfers':  { title:'Transfer Report',   sub:'Transfer records report'     },
+  '/role-management':    { title:'Role Management',   sub:'Configure role permissions'  },
 }
 
 const roleColors = {
@@ -176,9 +177,9 @@ export default function Header() {
 
   return (
     <>
-      <header className="bg-white dark:bg-gray-800 border-b border-cream-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between flex-shrink-0 relative z-20">
+      <header className="bg-white dark:bg-gray-800 border-b border-cream-200 dark:border-gray-700 px-6 py-3 flex items-center justify-between flex-shrink-0 relative z-20">
         <div>
-          <h1 className="text-lg font-bold dark:text-white leading-none">{page.title}</h1>
+          <h1 className="text-base font-bold dark:text-white leading-none">{page.title}</h1>
           <p className="text-xs text-ink-300 dark:text-gray-400 mt-0.5">{page.sub}, {user?.name?.split(' ')[0]}</p>
         </div>
 

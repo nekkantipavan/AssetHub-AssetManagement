@@ -2,10 +2,10 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Box, Upload, ArrowLeftRight,
   Building2, Layers, Tag, Mail, Users, ScrollText,
-  LogOut, Plus, List, BarChart2, FileBox, FileText
+  LogOut, Plus, List, FileBox, FileText, ShieldCheck
 } from 'lucide-react'
 import clsx from 'clsx'
-import { useAuth, PAGE_PERMISSIONS } from '../../context/AuthContext'
+import { useAuth } from '../../context/AuthContext'
 
 const allNavItems = [
   { label:'Dashboard',   icon:LayoutDashboard, path:'/dashboard',   page:'dashboard'   },
@@ -26,8 +26,9 @@ const allReportItems = [
 ]
 
 const allSystemItems = [
-  { label:'Users',      icon:Users,      path:'/users',      page:'users'      },
-  { label:'Audit Logs', icon:ScrollText, path:'/audit-logs', page:'audit-logs' },
+  { label:'Users',           icon:Users,       path:'/users',           page:'users'           },
+  { label:'Audit Logs',      icon:ScrollText,  path:'/audit-logs',      page:'audit-logs'      },
+  { label:'Role Management', icon:ShieldCheck, path:'/role-management', page:'role-management' },
 ]
 
 const roleColors = {
@@ -71,12 +72,12 @@ export default function Sidebar() {
   const initials = user?.name?.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() || '??'
 
   return (
-    <aside className="w-64 flex-shrink-0 bg-white dark:bg-gray-800 flex flex-col shadow-soft overflow-y-auto border-r border-cream-200 dark:border-gray-700">
+    <aside className="w-56 flex-shrink-0 bg-white dark:bg-gray-800 flex flex-col shadow-soft overflow-y-auto border-r border-cream-200 dark:border-gray-700">
       {/* Logo */}
-      <div className="px-6 py-5 border-b border-cream-200 dark:border-gray-700">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-2xl bg-orange-gradient flex items-center justify-center shadow-soft">
-            <Box size={18} className="text-white" strokeWidth={2.5}/>
+      <div className="px-5 py-4 border-b border-cream-200 dark:border-gray-700">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-orange-gradient flex items-center justify-center shadow-soft">
+            <Box size={16} className="text-white" strokeWidth={2.5}/>
           </div>
           <div>
             <p className="text-sm font-bold text-ink-900 dark:text-gray-100 leading-none">AssetHub</p>
@@ -86,7 +87,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+      <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto">
         {navItems.map(item => <NavItem key={item.path} item={item}/>)}
 
         {/* Transfers — with sub-links */}
@@ -159,9 +160,9 @@ export default function Sidebar() {
       </nav>
 
       {/* User card + logout */}
-      <div className="px-4 pb-5 space-y-2">
-        <div className="bg-cream-100 dark:bg-gray-700 rounded-2xl p-3 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-orange-gradient flex items-center justify-center text-white text-xs font-bold shadow-soft flex-shrink-0">
+      <div className="px-3 pb-4 space-y-1.5">
+        <div className="bg-cream-100 dark:bg-gray-700 rounded-xl p-2.5 flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-orange-gradient flex items-center justify-center text-white text-xs font-bold shadow-soft flex-shrink-0">
             {initials}
           </div>
           <div className="flex-1 min-w-0">
@@ -172,10 +173,10 @@ export default function Sidebar() {
           </div>
         </div>
         <button onClick={handleLogout}
-          className="w-full flex items-center gap-2.5 px-4 py-2.5 rounded-2xl text-sm font-medium
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium
                      text-ink-500 dark:text-gray-400 hover:bg-red-50 dark:hover:bg-red-900/20
                      hover:text-red-500 transition-all duration-200">
-          <LogOut size={16}/>
+          <LogOut size={15}/>
           Sign out
         </button>
       </div>

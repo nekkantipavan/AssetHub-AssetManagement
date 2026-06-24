@@ -90,6 +90,10 @@ export const markNotificationRead    = id => api.put(`/notifications/${id}/read`
 export const getAssetReport    = () => api.get('/reports/assets')
 export const getTransferReport = () => api.get('/reports/transfers')
 
+// ── Role Permissions ─────────────────────────────────────────
+export const getRolePermissions    = ()     => api.get('/role-permissions')
+export const updateRolePermissions = data   => api.put('/role-permissions', data)
+
 // ── Audit Logs ───────────────────────────────────────────────
 export const getAuditLogs = () => api.get('/audit-logs')
 
