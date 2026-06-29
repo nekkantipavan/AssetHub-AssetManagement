@@ -6,6 +6,7 @@ const jwt     = require('jsonwebtoken')
 require('dotenv').config()
 const { sendHtml, buildApprovalEmail, buildReturnApprovalEmail, buildApprovalResultHtml, buildChallanTable } = require('./emailService')
 const crypto = require('crypto')
+const ASSET_FIELD_SPEC = require('./assetFieldSpec')
 
 const app        = express()
 app.use(express.json());
@@ -358,19 +359,25 @@ app.get('/api/assets', authMiddleware, async (req, res) => {
     const r = await pool.query(`
       SELECT
         a.id,
-        a.asset_code          AS asset_tag,
+        a.asset_code,
+        a.sub_sequence,
+        a.parent_asset_id,
+        a.asset_code || ' ' || a.sub_sequence  AS sub_asset_code,
         a.name,
-        a.serial_number       AS serial,
-        a.acquisition_value   AS value,
+        a.serial_number,
+        a.acquisition_value,
         a.category,
         a.asset_class,
+        a.company_code,
+        a.cost_center,
+        a.reference_invoice_no,
+        a.fiscal_year,
         a.assigned_employee,
         a.date_of_purchase,
         a.warranty_date,
         a.make,
-        a.model,
-        a.asset_status,
         a.supplier_name,
+        a.asset_status,
         a.notes,
         a.plant_id,
         a.dept_id,
@@ -392,40 +399,174 @@ app.get('/api/assets', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 
- 
+app.get('/api/assets/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params
+    const assetRes = await pool.query(`
+      SELECT a.*,
+        a.asset_code || ' ' || a.sub_sequence  AS sub_asset_code,
+        p.name      AS plant_name,
+        p.code      AS plant_code,
+        p.location  AS plant_location,
+        d.name      AS dept_name,
+        u.name      AS employee_name,
+        ccm.description AS cost_center_description
+      FROM assets a
+      LEFT JOIN plants p         ON a.plant_id        = p.id
+      LEFT JOIN departments d    ON a.dept_id          = d.id
+      LEFT JOIN users u          ON a.assigned_user_id = u.id
+      LEFT JOIN asset_masters ccm ON ccm.type = 'cost_center' AND ccm.value = a.cost_center
+      WHERE a.id = $1
+    `, [id])
+    if (!assetRes.rows.length) return res.status(404).json({ error: 'Asset not found' })
+    const asset = assetRes.rows[0]
+
+    const [transfersRes, logsRes] = await Promise.all([
+      pool.query(`
+        SELECT t.id, t.transfer_code, t.transfer_type, t.status,
+               t.created_at, t.approved_at, t.notes,
+               fp.name AS from_plant_name,
+               tp.name AS to_plant_name,
+               u.name  AS initiated_by_name
+        FROM transfer_items ti
+        JOIN transfers t   ON ti.transfer_id  = t.id
+        LEFT JOIN plants fp ON t.from_plant_id = fp.id
+        LEFT JOIN plants tp ON t.to_plant_id   = tp.id
+        LEFT JOIN users u   ON t.initiated_by  = u.id
+        WHERE ti.asset_id = $1
+        ORDER BY t.created_at ASC
+      `, [id]),
+
+      pool.query(`
+        SELECT l.id, l.action, l.details, l.created_at, l.meta,
+               u.name AS user_name
+        FROM audit_logs l
+        LEFT JOIN users u ON l.user_id = u.id
+        WHERE l.module = 'Assets' AND l.details ILIKE $1
+        ORDER BY l.created_at ASC
+        LIMIT 200
+      `, [`%${asset.asset_code}%`])
+    ])
+
+    res.json({ asset, transfers: transfersRes.rows, logs: logsRes.rows })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
 app.post('/api/assets', authMiddleware, requireRole('Admin','Manager'), async (req, res) => {
   try {
+    const body = req.body
+
+    // ── 1. Required field presence (driven by shared spec) ──────
+    for (const field of ASSET_FIELD_SPEC) {
+      if (!field.required) continue
+      const val = body[field.db]
+      if (val == null || String(val).trim() === '')
+        return res.status(400).json({ error: `${field.label} is required` })
+    }
+
+    // ── 2. Destructure ──────────────────────────────────────────
     const {
-      asset_code, asset_tag, name, serial_number, serial, acquisition_value, value,
-      category, asset_class, assigned_employee, make, model, asset_status,
+      asset_code, sub_sequence = 0,
+      name, serial_number, acquisition_value,
+      category, asset_class, assigned_employee, make, asset_status,
+      company_code, cost_center, reference_invoice_no, fiscal_year, supplier_name,
       date_of_purchase, warranty_date, notes,
       plant_id, dept_id, assigned_user_id, status
-    } = req.body
-    const code  = (asset_code || asset_tag || '').trim()
-    const aname = (name || '').trim()
-    if (!code || !aname) return res.status(400).json({ error: 'Asset code and name are required' })
+    } = body
 
+    const code   = String(asset_code).trim()
+    const aname  = String(name).trim()
+    const subSeq = parseInt(sub_sequence, 10)
+
+    // ── 3. Type-specific validation ─────────────────────────────
+    if (isNaN(subSeq) || subSeq < 0)
+      return res.status(400).json({ error: 'Sub Asset Number must be 0 or a positive integer' })
+
+    const acqValue = parseFloat(String(acquisition_value).replace(/[,₹$]/g, ''))
+    if (isNaN(acqValue))
+      return res.status(400).json({ error: 'Acquisition Value must be a number' })
+    if (acqValue < 0)
+      return res.status(400).json({ error: 'Acquisition Value cannot be negative' })
+
+    if (!['Active', 'Inactive'].includes(String(status)))
+      return res.status(400).json({ error: 'Status must be Active or Inactive' })
+
+    // ── 4. Masters validation ────────────────────────────────────
+    const mastersRes = await pool.query(
+      `SELECT type, value FROM asset_masters WHERE is_active=true AND type = ANY($1)`,
+      [['category', 'asset_class', 'asset_status', 'company_code', 'cost_center']]
+    )
+    const masterSets = {}
+    mastersRes.rows.forEach(m => {
+      if (!masterSets[m.type]) masterSets[m.type] = new Set()
+      masterSets[m.type].add(m.value)
+    })
+    for (const field of ASSET_FIELD_SPEC.filter(f => f.master)) {
+      const val = String(body[field.db] || '').trim()
+      if (!masterSets[field.master]?.has(val))
+        return res.status(400).json({ error: `${field.label} "${val}" not found in masters` })
+    }
+
+    // ── 5. Plant validation ──────────────────────────────────────
+    const plantRes = await pool.query(
+      'SELECT id FROM plants WHERE id=$1 AND status=$2', [plant_id, 'Active']
+    )
+    if (!plantRes.rows.length)
+      return res.status(400).json({ error: 'Business Area Code (Plant) not found or inactive' })
+
+    // ── 6. Department validation ─────────────────────────────────
+    const deptRes = await pool.query(
+      'SELECT id FROM departments WHERE id=$1 AND status=$2', [dept_id, 'Active']
+    )
+    if (!deptRes.rows.length)
+      return res.status(400).json({ error: 'Department not found or inactive' })
+
+    // ── 7. Sub Asset Number / parent resolution ──────────────────
+    let parentAssetId = null
+    if (subSeq > 0) {
+      const rootRes = await pool.query(
+        'SELECT id FROM assets WHERE asset_code=$1 AND sub_sequence=0', [code]
+      )
+      if (!rootRes.rows.length)
+        return res.status(400).json({
+          error: `Asset Code '${code}' has no root record (Sub Asset Number 0) — create that first.`
+        })
+      parentAssetId = rootRes.rows[0].id
+    }
+
+    // ── 8. Duplicate check ───────────────────────────────────────
+    const dupRes = await pool.query(
+      'SELECT id FROM assets WHERE asset_code=$1 AND sub_sequence=$2', [code, subSeq]
+    )
+    if (dupRes.rows.length)
+      return res.status(409).json({
+        error: `Asset Code '${code}' with Sub Asset Number ${subSeq} already exists`
+      })
+
+    // ── 9. Insert ────────────────────────────────────────────────
     const r = await pool.query(
       `INSERT INTO assets (
-         asset_code, name, serial_number, acquisition_value,
-         category, asset_class, assigned_employee, make, model, asset_status,
+         asset_code, sub_sequence, parent_asset_id,
+         name, serial_number, acquisition_value,
+         category, asset_class, company_code, cost_center,
+         reference_invoice_no, fiscal_year, supplier_name,
+         assigned_employee, make, asset_status,
          date_of_purchase, warranty_date, notes,
          plant_id, dept_id, assigned_user_id, status,
          created_at, updated_at
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW(),NOW())
-       RETURNING
-         id, asset_code AS asset_tag, name,
-         serial_number AS serial, acquisition_value AS value,
-         category, asset_class, assigned_employee, make, model, asset_status,
-         date_of_purchase, warranty_date, notes,
-         plant_id, dept_id, assigned_user_id, status, created_at, updated_at`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,NOW(),NOW())
+       RETURNING *`,
       [
-        code, aname, serial_number||serial||null, acquisition_value||value||null,
-        category||null, asset_class||null, assigned_employee||null,
-        make||null, model||null, asset_status||'In Use',
+        code, subSeq, parentAssetId,
+        aname, serial_number||null, acqValue,
+        String(category).trim(), String(asset_class).trim(),
+        String(company_code).trim(), String(cost_center).trim(),
+        String(reference_invoice_no).trim(), String(fiscal_year).trim(),
+        String(supplier_name).trim(),
+        String(assigned_employee).trim(), String(make).trim(), String(asset_status).trim(),
         date_of_purchase||null, warranty_date||null, notes||null,
-        plant_id||null, dept_id||null, assigned_user_id||null, status||'Active'
+        plant_id, dept_id, assigned_user_id||null, status
       ]
     )
     await writeAudit(req.user.id, 'Asset Created', 'Assets', `${code} – ${aname}`, req.ip)
@@ -436,59 +577,146 @@ app.post('/api/assets', authMiddleware, requireRole('Admin','Manager'), async (r
 app.put('/api/assets/:id', authMiddleware, requireRole('Admin','Manager'), async (req, res) => {
   try {
     const { id } = req.params
+    const body   = req.body
+
+    // ── 1. Required field presence (driven by shared spec) ──────
+    for (const field of ASSET_FIELD_SPEC) {
+      if (!field.required) continue
+      const val = body[field.db]
+      if (val == null || String(val).trim() === '')
+        return res.status(400).json({ error: `${field.label} is required` })
+    }
+
+    // ── 2. Destructure ──────────────────────────────────────────
     const {
-      asset_code, asset_tag, name, serial_number, serial, acquisition_value, value,
-      category, asset_class, assigned_employee, make, model, asset_status,
+      asset_code, sub_sequence = 0,
+      name, serial_number, acquisition_value,
+      category, asset_class, assigned_employee, make, asset_status,
+      company_code, cost_center, reference_invoice_no, fiscal_year, supplier_name,
       date_of_purchase, warranty_date, notes,
       plant_id, dept_id, assigned_user_id, status
-    } = req.body
-    const code  = (asset_code || asset_tag || '').trim()
-    const aname = (name || '').trim()
-    if (!code || !aname) return res.status(400).json({ error: 'Asset code and name are required' })
+    } = body
 
-    const oldRec = await pool.query(
-      `SELECT asset_code, name, serial_number, acquisition_value,
-              category, asset_class, assigned_employee, make, model, asset_status,
-              date_of_purchase, warranty_date, notes,
-              plant_id, dept_id, assigned_user_id, status
-       FROM assets WHERE id=$1`,
-      [id]
+    const code   = String(asset_code).trim()
+    const aname  = String(name).trim()
+    const subSeq = parseInt(sub_sequence, 10)
+
+    // ── 3. Type-specific validation ─────────────────────────────
+    if (isNaN(subSeq) || subSeq < 0)
+      return res.status(400).json({ error: 'Sub Asset Number must be 0 or a positive integer' })
+
+    const acqValue = parseFloat(String(acquisition_value).replace(/[,₹$]/g, ''))
+    if (isNaN(acqValue))
+      return res.status(400).json({ error: 'Acquisition Value must be a number' })
+    if (acqValue < 0)
+      return res.status(400).json({ error: 'Acquisition Value cannot be negative' })
+
+    if (!['Active', 'Inactive'].includes(String(status)))
+      return res.status(400).json({ error: 'Status must be Active or Inactive' })
+
+    // ── 4. Masters validation ────────────────────────────────────
+    const mastersRes = await pool.query(
+      `SELECT type, value FROM asset_masters WHERE is_active=true AND type = ANY($1)`,
+      [['category', 'asset_class', 'asset_status', 'company_code', 'cost_center']]
     )
+    const masterSets = {}
+    mastersRes.rows.forEach(m => {
+      if (!masterSets[m.type]) masterSets[m.type] = new Set()
+      masterSets[m.type].add(m.value)
+    })
+    for (const field of ASSET_FIELD_SPEC.filter(f => f.master)) {
+      const val = String(body[field.db] || '').trim()
+      if (!masterSets[field.master]?.has(val))
+        return res.status(400).json({ error: `${field.label} "${val}" not found in masters` })
+    }
 
+    // ── 5. Plant validation ──────────────────────────────────────
+    const plantRes = await pool.query(
+      'SELECT id FROM plants WHERE id=$1 AND status=$2', [plant_id, 'Active']
+    )
+    if (!plantRes.rows.length)
+      return res.status(400).json({ error: 'Business Area Code (Plant) not found or inactive' })
+
+    // ── 6. Department validation ─────────────────────────────────
+    const deptRes = await pool.query(
+      'SELECT id FROM departments WHERE id=$1 AND status=$2', [dept_id, 'Active']
+    )
+    if (!deptRes.rows.length)
+      return res.status(400).json({ error: 'Department not found or inactive' })
+
+    // ── 7. Sub Asset Number / parent resolution ──────────────────
+    // Exclude current record so editing a root and keeping it as root passes
+    let parentAssetId = null
+    if (subSeq > 0) {
+      const rootRes = await pool.query(
+        'SELECT id FROM assets WHERE asset_code=$1 AND sub_sequence=0 AND id != $2',
+        [code, id]
+      )
+      if (!rootRes.rows.length)
+        return res.status(400).json({
+          error: `Asset Code '${code}' has no root record (Sub Asset Number 0) — create that first.`
+        })
+      parentAssetId = rootRes.rows[0].id
+    }
+
+    // ── 8. Duplicate check (exclude current record) ──────────────
+    const dupRes = await pool.query(
+      'SELECT id FROM assets WHERE asset_code=$1 AND sub_sequence=$2 AND id != $3',
+      [code, subSeq, id]
+    )
+    if (dupRes.rows.length)
+      return res.status(409).json({
+        error: `Asset Code '${code}' with Sub Asset Number ${subSeq} already exists`
+      })
+
+    // ── 9. Capture old state for audit diff ─────────────────────
+    const oldRec = await pool.query('SELECT * FROM assets WHERE id=$1', [id])
+    if (!oldRec.rows.length) return res.status(404).json({ error: 'Asset not found' })
+
+    // ── 10. Update ───────────────────────────────────────────────
     const r = await pool.query(
       `UPDATE assets SET
-         asset_code=$1, name=$2, serial_number=$3, acquisition_value=$4,
-         category=$5, asset_class=$6, assigned_employee=$7, make=$8, model=$9, asset_status=$10,
-         date_of_purchase=$11, warranty_date=$12, notes=$13,
-         plant_id=$14, dept_id=$15, assigned_user_id=$16, status=$17,
+         asset_code=$1, sub_sequence=$2, parent_asset_id=$3,
+         name=$4, serial_number=$5, acquisition_value=$6,
+         category=$7, asset_class=$8, company_code=$9, cost_center=$10,
+         reference_invoice_no=$11, fiscal_year=$12, supplier_name=$13,
+         assigned_employee=$14, make=$15, asset_status=$16,
+         date_of_purchase=$17, warranty_date=$18, notes=$19,
+         plant_id=$20, dept_id=$21, assigned_user_id=$22, status=$23,
          updated_at=NOW()
-       WHERE id=$18
-       RETURNING
-         id, asset_code AS asset_tag, name,
-         serial_number AS serial, acquisition_value AS value,
-         category, asset_class, assigned_employee, make, model, asset_status,
-         date_of_purchase, warranty_date, notes,
-         plant_id, dept_id, assigned_user_id, status, created_at, updated_at`,
+       WHERE id=$24
+       RETURNING *`,
       [
-        code, aname, serial_number||serial||null, acquisition_value||value||null,
-        category||null, asset_class||null, assigned_employee||null,
-        make||null, model||null, asset_status||'In Use',
+        code, subSeq, parentAssetId,
+        aname, serial_number||null, acqValue,
+        String(category).trim(), String(asset_class).trim(),
+        String(company_code).trim(), String(cost_center).trim(),
+        String(reference_invoice_no).trim(), String(fiscal_year).trim(),
+        String(supplier_name).trim(),
+        String(assigned_employee).trim(), String(make).trim(), String(asset_status).trim(),
         date_of_purchase||null, warranty_date||null, notes||null,
-        plant_id||null, dept_id||null, assigned_user_id||null, status||'Active',
+        plant_id, dept_id, assigned_user_id||null, status,
         id
       ]
     )
     if (!r.rows.length) return res.status(404).json({ error: 'Asset not found' })
 
-    const oldData = oldRec.rows[0] || {}
+    const oldData = oldRec.rows[0]
     const newData = {
-      asset_code: code, name: aname,
-      serial_number: serial_number||serial||null, acquisition_value: acquisition_value||value||null,
-      category: category||null, asset_class: asset_class||null, assigned_employee: assigned_employee||null,
-      plant_id: plant_id||null, dept_id: dept_id||null, assigned_user_id: assigned_user_id||null, status: status||'Active'
+      asset_code: code, sub_sequence: subSeq, name: aname,
+      serial_number: serial_number||null, acquisition_value: acqValue,
+      category: String(category).trim(), asset_class: String(asset_class).trim(),
+      company_code: String(company_code).trim(), cost_center: String(cost_center).trim(),
+      reference_invoice_no: String(reference_invoice_no).trim(),
+      fiscal_year: String(fiscal_year).trim(), supplier_name: String(supplier_name).trim(),
+      assigned_employee: String(assigned_employee).trim(), make: String(make).trim(),
+      asset_status: String(asset_status).trim(),
+      plant_id: plant_id||null, dept_id: dept_id||null, status
     }
     const changed = Object.keys(newData).filter(k => String(oldData[k] ?? '') !== String(newData[k] ?? ''))
-    const meta = changed.length ? { old: Object.fromEntries(changed.map(k => [k, oldData[k]])), new: Object.fromEntries(changed.map(k => [k, newData[k]])) } : null
+    const meta = changed.length
+      ? { old: Object.fromEntries(changed.map(k => [k, oldData[k]])), new: Object.fromEntries(changed.map(k => [k, newData[k]])) }
+      : null
 
     await writeAudit(req.user.id, 'Asset Modified', 'Assets', `Asset ${code} updated`, req.ip, meta)
     res.json(r.rows[0])
@@ -1721,13 +1949,16 @@ app.get('/api/masters/lookup', authMiddleware, async (req, res) => {
     const [plants, depts, masters] = await Promise.all([
       pool.query('SELECT id, code, name FROM plants WHERE status=$1 ORDER BY name', ['Active']),
       pool.query('SELECT id, code, name FROM departments WHERE status=$1 ORDER BY name', ['Active']),
-      pool.query(`SELECT type, value FROM asset_masters WHERE is_active=true ORDER BY type, sort_order, value`),
+      pool.query(`SELECT type, value, description FROM asset_masters WHERE is_active=true ORDER BY type, sort_order, value`),
     ])
 
     const mastersGrouped = {}
     masters.rows.forEach(r => {
       if (!mastersGrouped[r.type]) mastersGrouped[r.type] = []
-      mastersGrouped[r.type].push(r.value)
+      // cost_center carries a description; all other types are plain value strings
+      mastersGrouped[r.type].push(
+        r.type === 'cost_center' ? { value: r.value, description: r.description } : r.value
+      )
     })
 
     res.json({
@@ -1737,6 +1968,8 @@ app.get('/api/masters/lookup', authMiddleware, async (req, res) => {
       asset_classes:  mastersGrouped['asset_class']   || [],
       asset_statuses: mastersGrouped['asset_status']  || [],
       statuses:       mastersGrouped['status']        || [],
+      company_codes:  mastersGrouped['company_code']  || [],
+      cost_centers:   mastersGrouped['cost_center']   || [],
     })
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
@@ -1749,8 +1982,8 @@ app.get('/api/asset-masters', authMiddleware, async (req, res) => {
   try {
     const { type } = req.query
     const query = type
-      ? `SELECT id, type, value, sort_order, is_active FROM asset_masters WHERE type=$1 AND is_active=true ORDER BY sort_order, value`
-      : `SELECT id, type, value, sort_order, is_active FROM asset_masters ORDER BY type, sort_order, value`
+      ? `SELECT id, type, value, description, sort_order, is_active FROM asset_masters WHERE type=$1 AND is_active=true ORDER BY sort_order, value`
+      : `SELECT id, type, value, description, sort_order, is_active FROM asset_masters ORDER BY type, sort_order, value`
     const params = type ? [type] : []
     const r = await pool.query(query, params)
     res.json(r.rows)
@@ -1760,7 +1993,7 @@ app.get('/api/asset-masters', authMiddleware, async (req, res) => {
 app.get('/api/asset-masters/all', authMiddleware, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT id, type, value, sort_order, is_active
+      `SELECT id, type, value, description, sort_order, is_active
        FROM asset_masters
        WHERE is_active = true
        ORDER BY type, sort_order, value`
@@ -1768,7 +2001,7 @@ app.get('/api/asset-masters/all', authMiddleware, async (req, res) => {
     const grouped = {}
     r.rows.forEach(row => {
       if (!grouped[row.type]) grouped[row.type] = []
-      grouped[row.type].push({ id: row.id, value: row.value, sort_order: row.sort_order })
+      grouped[row.type].push({ id: row.id, value: row.value, description: row.description, sort_order: row.sort_order })
     })
     res.json(grouped)
   } catch (err) { res.status(500).json({ error: err.message }) }
@@ -1776,15 +2009,15 @@ app.get('/api/asset-masters/all', authMiddleware, async (req, res) => {
 
 app.post('/api/asset-masters', authMiddleware, requireRole('Admin'), async (req, res) => {
   try {
-    const { type, value, sort_order } = req.body
+    const { type, value, sort_order, description } = req.body
     if (!type?.trim() || !value?.trim())
       return res.status(400).json({ error: 'Type and value are required' })
 
     const r = await pool.query(
-      `INSERT INTO asset_masters (type, value, sort_order, is_active, created_at)
-       VALUES ($1, $2, $3, true, NOW())
-       RETURNING id, type, value, sort_order, is_active`,
-      [type.trim(), value.trim(), sort_order || 0]
+      `INSERT INTO asset_masters (type, value, description, sort_order, is_active, created_at)
+       VALUES ($1, $2, $3, $4, true, NOW())
+       RETURNING id, type, value, description, sort_order, is_active`,
+      [type.trim(), value.trim(), description?.trim() || null, sort_order || 0]
     )
     await writeAudit(req.user.id, 'Master Added', 'Masters', `${type}: "${value}" added`, req.ip)
     res.status(201).json(r.rows[0])
@@ -1797,19 +2030,19 @@ app.post('/api/asset-masters', authMiddleware, requireRole('Admin'), async (req,
 app.put('/api/asset-masters/:id', authMiddleware, requireRole('Admin'), async (req, res) => {
   try {
     const { id } = req.params
-    const { value, sort_order, is_active } = req.body
+    const { value, sort_order, is_active, description } = req.body
     if (!value?.trim()) return res.status(400).json({ error: 'Value is required' })
 
-    const oldMaster = await pool.query(`SELECT type, value, sort_order, is_active FROM asset_masters WHERE id=$1`, [id])
+    const oldMaster = await pool.query(`SELECT type, value, description, sort_order, is_active FROM asset_masters WHERE id=$1`, [id])
 
     const r = await pool.query(
-      `UPDATE asset_masters SET value=$1, sort_order=$2, is_active=$3 WHERE id=$4
-       RETURNING id, type, value, sort_order, is_active`,
-      [value.trim(), sort_order ?? 0, is_active ?? true, id]
+      `UPDATE asset_masters SET value=$1, description=$2, sort_order=$3, is_active=$4 WHERE id=$5
+       RETURNING id, type, value, description, sort_order, is_active`,
+      [value.trim(), description?.trim() || null, sort_order ?? 0, is_active ?? true, id]
     )
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' })
     const oldM = oldMaster.rows[0] || {}
-    const newM = { value: value.trim(), sort_order: sort_order ?? 0, is_active: is_active ?? true }
+    const newM = { value: value.trim(), description: description?.trim() || null, sort_order: sort_order ?? 0, is_active: is_active ?? true }
     const changedM = Object.keys(newM).filter(k => String(oldM[k] ?? '') !== String(newM[k] ?? ''))
     const metaM = changedM.length ? { old: Object.fromEntries(changedM.map(k => [k, oldM[k]])), new: Object.fromEntries(changedM.map(k => [k, newM[k]])) } : null
     await writeAudit(req.user.id, 'Master Updated', 'Masters', `${r.rows[0].type}: "${oldM.value}" → "${value}"`, req.ip, metaM)
@@ -1843,9 +2076,14 @@ app.post('/api/assets/bulk', authMiddleware, requireRole('Admin', 'Manager'), as
     if (!Array.isArray(rows) || rows.length === 0)
       return res.status(400).json({ error: 'No rows provided' })
 
-    const [plantsRes, deptsRes] = await Promise.all([
+    // ── Load reference data once for the whole batch ────────────
+    const [plantsRes, deptsRes, mastersRes] = await Promise.all([
       pool.query('SELECT id, code, name FROM plants WHERE status=$1', ['Active']),
       pool.query('SELECT id, code, name FROM departments WHERE status=$1', ['Active']),
+      pool.query(
+        `SELECT type, value FROM asset_masters WHERE is_active=true AND type = ANY($1)`,
+        [['category', 'asset_class', 'asset_status', 'company_code', 'cost_center']]
+      ),
     ])
 
     const plantMap = {}
@@ -1860,135 +2098,266 @@ app.post('/api/assets/bulk', authMiddleware, requireRole('Admin', 'Manager'), as
       deptMap[d.code.trim().toLowerCase()] = d
     })
 
-    const errors = []
-    const valid  = []
+    const masterSets = {}
+    mastersRes.rows.forEach(m => {
+      if (!masterSets[m.type]) masterSets[m.type] = new Set()
+      masterSets[m.type].add(m.value)
+    })
 
-    for (let i = 0; i < rows.length; i++) {
-      const row    = rows[i]
-      const rowNum = i + 2
+    // Index spec by db name for O(1) access
+    const F = {}
+    ASSET_FIELD_SPEC.forEach(f => { F[f.db] = f })
+
+    // Resolve a cell value from a spreadsheet row using the spec's canonical name + aliases
+    function getCol(row, field) {
+      const lc = s => String(s || '').toLowerCase().trim()
+      for (const key of Object.keys(row)) {
+        if (lc(key) === lc(field.col) || field.aliases.some(a => a === lc(key)))
+          return String(row[key] ?? '').trim()
+      }
+      return ''
+    }
+
+    function parseDate(raw, fieldLabel, rowErrs) {
+      if (!raw) return null
+      const ddmm = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+      const iso  = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+      if (ddmm) return `${ddmm[3]}-${ddmm[2]}-${ddmm[1]}`
+      if (iso)  return raw
+      rowErrs.push({ field: fieldLabel, error: `"${raw}" must be DD/MM/YYYY` })
+      return null
+    }
+
+    // Validate one spreadsheet row; return { rowErrs, parsed }
+    function validateRow(raw) {
       const rowErrs = []
 
-      const assetCode  = String(row['Asset ID']           || '').trim()
-      const assetName  = String(row['Asset Name']         || '').trim()
-      const serial     = String(row['Serial Number']      || '').trim()
-      const valueRaw   = String(row['Acquisition Value']  || '').trim()
-      const bizArea    = String(row['Business Area']      || '').trim()
-      const plantName  = String(row['Plant']              || '').trim()
-      const deptName   = String(row['Department']         || '').trim()
-      const employee   = String(row['Assigned Employee']  || '').trim()
-      const statusRaw  = String(row['Status']             || 'Active').trim()
-      const category   = String(row['Category']           || '').trim()
-      const assetClass = String(row['Asset Class']        || row['Asset Class Description'] || '').trim()
-      const make       = String(row['Make']               || '').trim() || null
-      const model      = String(row['Model']              || '').trim() || null
-      const assetStatus= String(row['Asset Status']       || 'Available').trim()
-      const supplier   = String(row['Supplier Name']      || '').trim() || null
-      const note       = String(row['Note']               || row['Notes'] || '').trim() || null
-      const dopRaw     = String(row['Date of Purchase']   || row['Capitalized On'] || '').trim()
-      const warRaw     = String(row['Warranty Date']      || '').trim()
+      // Required presence for every spec field except the ones with dedicated validators below
+      for (const field of ASSET_FIELD_SPEC) {
+        if (!field.required) continue
+        if (field.type === 'plant' || field.type === 'department') continue
+        if (field.db === 'sub_sequence') continue   // validated specifically (avoids double error)
+        const val = getCol(raw, field)
+        if (!val) rowErrs.push({ field: field.col, error: `${field.label} is required` })
+      }
 
-      if (!assetCode)  rowErrs.push({ field:'Asset ID',          error:'Asset ID is required' })
-      if (!assetName)  rowErrs.push({ field:'Asset Name',        error:'Asset Name is required' })
-      if (!serial)     rowErrs.push({ field:'Serial Number',     error:'Serial Number is required' })
-      if (!employee)   rowErrs.push({ field:'Assigned Employee', error:'Assigned Employee is required' })
+      // Sub Asset Number: required integer >= 0
+      const subRaw = getCol(raw, F.sub_sequence)
+      const subSeq = parseInt(subRaw, 10)
+      if (!subRaw) {
+        rowErrs.push({ field: 'Sub Asset Number', error: 'Sub Asset Number is required' })
+      } else if (isNaN(subSeq) || subSeq < 0) {
+        rowErrs.push({ field: 'Sub Asset Number', error: `"${subRaw}" must be 0 or a positive integer` })
+      }
 
+      // Acquisition Value: required, numeric, non-negative
+      const valueRaw = getCol(raw, F.acquisition_value)
       let acqValue = null
-      if (!valueRaw) {
-        rowErrs.push({ field:'Acquisition Value', error:'Acquisition Value is required' })
-      } else {
-        const cleaned = valueRaw.replace(/[,₹$]/g, '').trim()
+      if (valueRaw) {
+        const cleaned = valueRaw.replace(/[,₹$]/g, '')
         if (isNaN(Number(cleaned))) {
-          rowErrs.push({ field:'Acquisition Value', error:`"${valueRaw}" is not a valid number` })
+          rowErrs.push({ field: 'Acquisition Value', error: `"${valueRaw}" is not a valid number` })
         } else {
           acqValue = parseFloat(cleaned)
-          if (acqValue < 0) rowErrs.push({ field:'Acquisition Value', error:'Cannot be negative' })
+          if (acqValue < 0) rowErrs.push({ field: 'Acquisition Value', error: 'Cannot be negative' })
         }
       }
 
-      let plantId = null
-      const matchedPlant = plantMap[bizArea.toLowerCase()] || plantMap[plantName.toLowerCase()]
-      if (!bizArea && !plantName) {
-        rowErrs.push({ field:'Plant', error:'Business Area (plant code) is required' })
-      } else if (!matchedPlant) {
-        const validPlants = plantsRes.rows.map(p => `${p.code} (${p.name})`).join(', ')
-        rowErrs.push({ field:'Plant', error:`"${bizArea || plantName}" not found. Valid: ${validPlants || 'none — add plants first'}` })
-      } else {
-        plantId = matchedPlant.id
+      // Status enum
+      const statusRaw = getCol(raw, F.status)
+      if (statusRaw && !['active', 'inactive'].includes(statusRaw.toLowerCase()))
+        rowErrs.push({ field: 'Status', error: `Must be Active or Inactive (got "${statusRaw}")` })
+
+      // Masters: category, asset_class, asset_status, company_code, cost_center
+      for (const field of ASSET_FIELD_SPEC.filter(f => f.master)) {
+        const val = getCol(raw, field)
+        if (!val) continue  // already caught by required check above
+        if (!masterSets[field.master]?.has(val))
+          rowErrs.push({ field: field.col, error: `"${val}" not found in ${field.label} masters` })
       }
 
+      // Business Area Code → plant_id (code lookup)
+      const bizArea = getCol(raw, F.plant_id)
+      let plantId = null
+      if (!bizArea) {
+        rowErrs.push({ field: 'Business Area Code', error: 'Business Area Code is required' })
+      } else {
+        const matched = plantMap[bizArea.toLowerCase()]
+        if (!matched) {
+          const hint = plantsRes.rows.map(p => `${p.code} (${p.name})`).join(', ')
+          rowErrs.push({ field: 'Business Area Code', error: `"${bizArea}" not found. Valid: ${hint || 'none — add plants first'}` })
+        } else {
+          plantId = matched.id
+        }
+      }
+
+      // Department → dept_id (name or code lookup)
+      const deptName = getCol(raw, F.dept_id)
       let deptId = null
       if (!deptName) {
-        rowErrs.push({ field:'Department', error:'Department is required' })
+        rowErrs.push({ field: 'Department', error: 'Department is required' })
       } else {
-        const matchedDept = deptMap[deptName.toLowerCase()]
-        if (!matchedDept) {
-          const validDepts = deptsRes.rows.map(d => d.name).join(', ')
-          rowErrs.push({ field:'Department', error:`"${deptName}" not found. Valid: ${validDepts || 'none — add departments first'}` })
+        const matched = deptMap[deptName.toLowerCase()]
+        if (!matched) {
+          const hint = deptsRes.rows.map(d => d.name).join(', ')
+          rowErrs.push({ field: 'Department', error: `"${deptName}" not found. Valid: ${hint || 'none — add departments first'}` })
         } else {
-          deptId = matchedDept.id
+          deptId = matched.id
         }
       }
 
-      const statusNorm = statusRaw.toLowerCase()
-      if (!['active', 'inactive'].includes(statusNorm)) {
-        rowErrs.push({ field:'Status', error:`Must be Active or Inactive (got "${statusRaw}")` })
-      }
+      // Dates
+      const dopRaw = getCol(raw, F.date_of_purchase)
+      const warRaw = getCol(raw, F.warranty_date)
+      const dop      = parseDate(dopRaw, 'Capitalized On', rowErrs)
+      const warranty = parseDate(warRaw, 'Warranty Date', rowErrs)
 
-      function parseDate(raw, field) {
-        if (!raw) return null
-        const ddmm = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
-        const iso  = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-        if (ddmm) return `${ddmm[3]}-${ddmm[2]}-${ddmm[1]}`
-        if (iso)  return raw
-        rowErrs.push({ field, error:`"${raw}" must be DD/MM/YYYY` })
-        return null
+      return {
+        rowErrs,
+        parsed: {
+          assetCode:    getCol(raw, F.asset_code),
+          subSeq:       isNaN(subSeq) ? -1 : subSeq,
+          assetName:    getCol(raw, F.name),
+          serial:       getCol(raw, F.serial_number) || null,
+          acqValue,
+          category:     getCol(raw, F.category),
+          assetClass:   getCol(raw, F.asset_class),
+          assetStatus:  getCol(raw, F.asset_status),
+          companyCode:  getCol(raw, F.company_code),
+          costCenter:   getCol(raw, F.cost_center),
+          refInvoice:   getCol(raw, F.reference_invoice_no),
+          fiscalYear:   getCol(raw, F.fiscal_year),
+          supplierName: getCol(raw, F.supplier_name),
+          make:         getCol(raw, F.make) || null,
+          employee:     getCol(raw, F.assigned_employee),
+          note:         getCol(raw, F.notes) || null,
+          plantId, deptId,
+          status: statusRaw
+            ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1).toLowerCase()
+            : 'Active',
+          dop, warranty,
+        }
       }
-      const dop      = parseDate(dopRaw, 'Date of Purchase')
-      const warranty = parseDate(warRaw, 'Warranty Date')
+    }
 
-      if (rowErrs.length > 0) {
+    // Shared INSERT (roots use subSeq=0/parentId=null; children supply both)
+    const INSERT_SQL = `
+      INSERT INTO assets (
+        asset_code, sub_sequence, parent_asset_id,
+        name, serial_number, acquisition_value,
+        category, asset_class, company_code, cost_center,
+        reference_invoice_no, fiscal_year, supplier_name,
+        assigned_employee, make, asset_status,
+        date_of_purchase, warranty_date, notes,
+        plant_id, dept_id, status,
+        created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,NOW(),NOW())
+      RETURNING id`
+
+    const insertParams = (p, subSeq, parentId) => [
+      p.assetCode, subSeq, parentId,
+      p.assetName, p.serial, p.acqValue,
+      p.category, p.assetClass, p.companyCode, p.costCenter,
+      p.refInvoice, p.fiscalYear, p.supplierName,
+      p.employee, p.make, p.assetStatus,
+      p.dop, p.warranty, p.note,
+      p.plantId, p.deptId, p.status,
+    ]
+
+    const errors       = []
+    const validRoots   = []
+    const validChildren = []
+
+    // ── Validation loop (all rows) ──────────────────────────────
+    for (let i = 0; i < rows.length; i++) {
+      const rowNum = i + 2
+      const { rowErrs, parsed } = validateRow(rows[i])
+      if (rowErrs.length) {
         rowErrs.forEach(e => errors.push({ row: rowNum, ...e }))
         continue
       }
-
-      valid.push({
-        assetCode, assetName, serial, acqValue,
-        plantId, deptId, employee,
-        status: statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1).toLowerCase(),
-        category: category || null,
-        assetClass: assetClass || null,
-        make, model, assetStatus, supplier, note, dop, warranty
-      })
+      if (parsed.subSeq === 0) {
+        validRoots.push({ rowNum, parsed })
+      } else {
+        validChildren.push({ rowNum, parsed })
+      }
     }
 
     let inserted = 0
-    for (const row of valid) {
-      const dup = await pool.query('SELECT id FROM assets WHERE asset_code=$1', [row.assetCode])
-      if (dup.rows.length > 0) {
-        errors.push({ row:'?', field:'Asset ID', error:`"${row.assetCode}" already exists — skipped` })
+    const inFileRootMap = {}   // asset_code → db id (inserted this run OR pre-existing)
+    const seenRootCodes = new Set()
+
+    // ── Pass 1: root assets (sub_sequence = 0) ─────────────────
+    for (const { rowNum, parsed } of validRoots) {
+      // In-file duplicate root: only the first occurrence for each asset_code is valid
+      if (seenRootCodes.has(parsed.assetCode)) {
+        errors.push({
+          row: rowNum,
+          field: 'Asset Code',
+          error: `Asset Code '${parsed.assetCode}' with Sub Asset Number 0 appears more than once in this file — only the first occurrence is imported`
+        })
         continue
       }
+      seenRootCodes.add(parsed.assetCode)
+
+      // DB duplicate check on (asset_code, sub_sequence = 0)
+      const dup = await pool.query(
+        'SELECT id FROM assets WHERE asset_code=$1 AND sub_sequence=0', [parsed.assetCode]
+      )
+      if (dup.rows.length) {
+        inFileRootMap[parsed.assetCode] = dup.rows[0].id  // register so children in this file can link
+        errors.push({ row: rowNum, field: 'Asset Code', error: `"${parsed.assetCode}" with Sub Asset Number 0 already exists — skipped` })
+        continue
+      }
+
       try {
-        await pool.query(
-          `INSERT INTO assets
-           (asset_code, name, serial_number, acquisition_value,
-            plant_id, dept_id, assigned_employee, status,
-            category, asset_class, make, model,
-            asset_status, supplier_name, notes,
-            date_of_purchase, warranty_date,
-            created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW(),NOW())`,
-          [
-            row.assetCode, row.assetName, row.serial, row.acqValue,
-            row.plantId, row.deptId, row.employee, row.status,
-            row.category, row.assetClass, row.make, row.model,
-            row.assetStatus, row.supplier, row.note,
-            row.dop, row.warranty
-          ]
-        )
+        const ins = await pool.query(INSERT_SQL, insertParams(parsed, 0, null))
+        inFileRootMap[parsed.assetCode] = ins.rows[0].id
         inserted++
       } catch (dbErr) {
-        errors.push({ row:'?', field:'Asset ID', error:`Insert failed for "${row.assetCode}": ${dbErr.message}` })
+        errors.push({ row: rowNum, field: 'Asset Code', error: `Insert failed for "${parsed.assetCode}": ${dbErr.message}` })
+      }
+    }
+
+    // ── Pass 2: child assets (sub_sequence > 0) ────────────────
+    for (const { rowNum, parsed } of validChildren) {
+      // DB duplicate check on (asset_code, sub_sequence)
+      const dup = await pool.query(
+        'SELECT id FROM assets WHERE asset_code=$1 AND sub_sequence=$2',
+        [parsed.assetCode, parsed.subSeq]
+      )
+      if (dup.rows.length) {
+        errors.push({ row: rowNum, field: 'Asset Code', error: `"${parsed.assetCode}" with Sub Asset Number ${parsed.subSeq} already exists — skipped` })
+        continue
+      }
+
+      // Resolve parent: in-file map first (covers roots inserted this run), then DB
+      let parentId = inFileRootMap[parsed.assetCode]
+      if (!parentId) {
+        const rootRes = await pool.query(
+          'SELECT id FROM assets WHERE asset_code=$1 AND sub_sequence=0', [parsed.assetCode]
+        )
+        if (rootRes.rows.length) {
+          parentId = rootRes.rows[0].id
+          inFileRootMap[parsed.assetCode] = parentId  // cache for subsequent siblings
+        }
+      }
+
+      if (!parentId) {
+        errors.push({
+          row: rowNum,
+          field: 'Sub Asset Number',
+          error: `Asset Code '${parsed.assetCode}' has no root record (Sub Asset Number 0) — add it first, in this file or a previous one.`
+        })
+        continue
+      }
+
+      try {
+        await pool.query(INSERT_SQL, insertParams(parsed, parsed.subSeq, parentId))
+        inserted++
+      } catch (dbErr) {
+        errors.push({ row: rowNum, field: 'Asset Code', error: `Insert failed for "${parsed.assetCode}" sub ${parsed.subSeq}: ${dbErr.message}` })
       }
     }
 
@@ -2011,17 +2380,23 @@ app.get('/api/reports/assets', authMiddleware, requireRole('Admin', 'Manager'), 
     const r = await pool.query(`
       SELECT
         a.id,
-        a.asset_code          AS asset_tag,
+        a.asset_code,
+        a.sub_sequence,
+        a.asset_code || ' ' || a.sub_sequence  AS sub_asset_code,
         a.name,
-        a.serial_number       AS serial,
-        a.acquisition_value   AS value,
+        a.serial_number,
+        a.acquisition_value,
         a.category,
         a.asset_class,
+        a.company_code,
+        a.cost_center,
+        ccm.description                         AS cost_center_description,
         a.assigned_employee,
         a.make,
-        a.model,
-        a.asset_status,
         a.supplier_name,
+        a.reference_invoice_no,
+        a.fiscal_year,
+        a.asset_status,
         a.notes,
         a.status,
         a.date_of_purchase,
@@ -2033,9 +2408,10 @@ app.get('/api/reports/assets', authMiddleware, requireRole('Admin', 'Manager'), 
         d.name  AS dept_name,
         u.name  AS employee_name
       FROM assets a
-      LEFT JOIN plants p      ON a.plant_id        = p.id
-      LEFT JOIN departments d ON a.dept_id          = d.id
-      LEFT JOIN users u       ON a.assigned_user_id = u.id
+      LEFT JOIN plants p         ON a.plant_id        = p.id
+      LEFT JOIN departments d    ON a.dept_id          = d.id
+      LEFT JOIN users u          ON a.assigned_user_id = u.id
+      LEFT JOIN asset_masters ccm ON ccm.type = 'cost_center' AND ccm.value = a.cost_center
       ORDER BY a.created_at DESC
     `)
     res.json(r.rows)

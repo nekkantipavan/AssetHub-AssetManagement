@@ -49,8 +49,8 @@ export default function AssetReport() {
     return assets.filter(a => {
       const matchSearch = !q ||
         a.name?.toLowerCase().includes(q) ||
-        a.asset_tag?.toLowerCase().includes(q) ||
-        a.serial?.toLowerCase().includes(q) ||
+        a.asset_code?.toLowerCase().includes(q) ||
+        a.serial_number?.toLowerCase().includes(q) ||
         a.assigned_employee?.toLowerCase().includes(q) ||
         a.employee_name?.toLowerCase().includes(q)
       return matchSearch &&
@@ -69,33 +69,37 @@ export default function AssetReport() {
 
   function exportExcel() {
     const rows = filtered.map(a => ({
-      'Asset ID':           a.asset_tag || '',
-      'Asset Name':         a.name || '',
-      'Category':           a.category || '',
-      'Asset Class':        a.asset_class || '',
-      'Serial Number':      a.serial || '',
-      'Make':               a.make || '',
-      'Model':              a.model || '',
-      'Acquisition Value':  a.value != null ? Number(a.value) : '',
-      'Plant':              a.plant_name || '',
-      'Department':         a.dept_name || '',
-      'Assigned Employee':  a.assigned_employee || a.employee_name || '',
-      'Asset Status':       a.asset_status || '',
-      'Record Status':      a.status || '',
-      'Date of Purchase':   fmtDate(a.date_of_purchase),
-      'Warranty Date':      fmtDate(a.warranty_date),
-      'Supplier':           a.supplier_name || '',
-      'Notes':              a.notes || '',
-      'Created Date':       fmtDate(a.created_at),
-      'Last Updated':       fmtDate(a.updated_at),
+      'Asset Code':              a.asset_code || '',
+      'Sub Asset Code':          `${a.asset_code || ''} ${a.sub_sequence ?? 0}`,
+      'Asset Description':       a.name || '',
+      'Category':                a.category || '',
+      'Asset Class':             a.asset_class || '',
+      'Company Code':            a.company_code || '',
+      'Cost Center':             a.cost_center || '',
+      'Cost Center Desc.':       a.cost_center_description || '',
+      'Serial Number':           a.serial_number || '',
+      'Manufacturer':            a.make || '',
+      'Acquisition Value':       a.acquisition_value != null ? Number(a.acquisition_value) : '',
+      'Plant':                   a.plant_name || '',
+      'Department':              a.dept_name || '',
+      'Assigned Employee':       a.assigned_employee || a.employee_name || '',
+      'Asset Status':            a.asset_status || '',
+      'Record Status':           a.status || '',
+      'Capitalized On':          fmtDate(a.date_of_purchase),
+      'Warranty Date':           fmtDate(a.warranty_date),
+      'Supplier':                a.supplier_name || '',
+      'Notes':                   a.notes || '',
+      'Created Date':            fmtDate(a.created_at),
+      'Last Updated':            fmtDate(a.updated_at),
     }))
 
     const ws = XLSX.utils.json_to_sheet(rows)
     ws['!cols'] = [
-      { wch: 14 }, { wch: 28 }, { wch: 16 }, { wch: 16 }, { wch: 18 },
-      { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 18 },
-      { wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 16 },
-      { wch: 18 }, { wch: 24 }, { wch: 14 }, { wch: 14 },
+      { wch: 14 }, { wch: 16 }, { wch: 28 }, { wch: 16 }, { wch: 16 },
+      { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 18 }, { wch: 22 },
+      { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 14 },
+      { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 24 },
+      { wch: 14 }, { wch: 14 },
     ]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Asset Report')
@@ -150,7 +154,7 @@ export default function AssetReport() {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search by name, asset ID, serial, employee…"
+              placeholder="Search by name, asset code, serial, employee…"
               className="pl-9 pr-4 py-2.5 bg-cream-100 dark:bg-gray-700 rounded-2xl text-sm placeholder-ink-300 focus:outline-none focus:ring-2 focus:ring-brand-300 w-full"
             />
           </div>
@@ -189,13 +193,15 @@ export default function AssetReport() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1400px]">
+          <table className="w-full min-w-[2800px]">
             <thead>
               <tr className="border-b border-cream-200 dark:border-gray-700 bg-cream-50 dark:bg-gray-750">
                 {[
-                  'Asset ID', 'Asset Name', 'Category', 'Asset Class', 'Serial No.',
-                  'Make / Model', 'Plant', 'Department', 'Assigned To', 'Acq. Value',
-                  'Purchase Date', 'Warranty', 'Asset Status', 'Status'
+                  'Asset Code', 'Sub Asset Code', 'Asset Description', 'Category', 'Asset Class',
+                  'Company Code', 'Cost Center', 'Cost Center Desc.', 'Serial No.',
+                  'Manufacturer', 'Acq. Value', 'Plant', 'Department', 'Assigned To',
+                  'Asset Status', 'Record Status', 'Capitalized On', 'Warranty Date',
+                  'Supplier', 'Notes', 'Created', 'Last Updated'
                 ].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap">
                     {h}
@@ -207,31 +213,35 @@ export default function AssetReport() {
               {filtered.map((a, idx) => (
                 <tr key={a.id} className={`border-b border-cream-100 dark:border-gray-700 hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors ${idx % 2 === 1 ? 'bg-cream-50/40' : ''}`}>
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <span className="text-brand-600 font-bold text-xs font-mono">{a.asset_tag}</span>
+                    <span className="text-brand-600 font-bold text-xs font-mono">{a.asset_code}</span>
                   </td>
-                  <td className="px-4 py-3 max-w-[180px]">
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span className="font-mono text-xs text-ink-500 dark:text-gray-400">{a.sub_asset_code || `${a.asset_code} ${a.sub_sequence ?? 0}`}</span>
+                  </td>
+                  <td className="px-4 py-3 max-w-[200px]">
                     <span className="block truncate font-medium text-sm text-ink-900 dark:text-gray-100">{a.name}</span>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <span className="text-xs bg-cream-100 dark:bg-gray-700 text-ink-600 dark:text-gray-300 px-2 py-1 rounded-lg">{a.category || '—'}</span>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-500 dark:text-gray-400">{a.asset_class || '—'}</td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <span className="font-mono text-xs text-ink-400">{a.serial || '—'}</span>
+                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-500 dark:text-gray-400">{a.company_code || '—'}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-500 dark:text-gray-400">{a.cost_center || '—'}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-400 dark:text-gray-500 max-w-[160px]">
+                    <span className="block truncate">{a.cost_center_description || '—'}</span>
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-500 dark:text-gray-400">
-                    {[a.make, a.model].filter(Boolean).join(' / ') || '—'}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span className="font-mono text-xs text-ink-400">{a.serial_number || '—'}</span>
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-500 dark:text-gray-400">{a.make || '—'}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm font-semibold text-ink-700 dark:text-gray-200">
+                    {formatINR(a.acquisition_value)}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-500 dark:text-gray-400">{a.plant_name || '—'}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-ink-600 dark:text-gray-300">{a.dept_name || '—'}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-ink-600 dark:text-gray-300">
                     {a.assigned_employee || a.employee_name || '—'}
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm font-semibold text-ink-700 dark:text-gray-200">
-                    {formatINR(a.value)}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-400">{fmtDate(a.date_of_purchase)}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-400">{fmtDate(a.warranty_date)}</td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <span className="text-xs px-2 py-1 rounded-lg font-medium bg-cream-100 dark:bg-gray-700 text-ink-600 dark:text-gray-300">
                       {a.asset_status || '—'}
@@ -242,6 +252,14 @@ export default function AssetReport() {
                       {a.status}
                     </span>
                   </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-400">{fmtDate(a.date_of_purchase)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-400">{fmtDate(a.warranty_date)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-500 dark:text-gray-400">{a.supplier_name || '—'}</td>
+                  <td className="px-4 py-3 max-w-[160px]">
+                    <span className="block truncate text-xs text-ink-400 dark:text-gray-500">{a.notes || '—'}</span>
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-400">{fmtDate(a.created_at)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-xs text-ink-400">{fmtDate(a.updated_at)}</td>
                 </tr>
               ))}
             </tbody>

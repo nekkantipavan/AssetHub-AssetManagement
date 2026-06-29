@@ -8,6 +8,7 @@ import Login              from './pages/Login'
 import ForceChangePassword from './pages/ForceChangePassword'
 import Dashboard          from './pages/Dashboard'
 import Assets             from './pages/Assets'
+import AssetDetail        from './pages/AssetDetail'
 import BulkUpload         from './pages/BulkUpload'
 import Transfer           from './pages/Transfer'
 import NewTransfer        from './pages/NewTransfer'
@@ -26,7 +27,8 @@ import RoleManagement     from './pages/RoleManagement'
 // Pages that go inside the Layout (sidebar + header)
 const pages = [
   { path:'dashboard',   element:<Dashboard />,        page:'dashboard'   },
-  { path:'assets',      element:<Assets />,            page:'assets'      },
+  { path:'assets',       element:<Assets />,            page:'assets'      },
+  { path:'assets/:id',  element:<AssetDetail />,       page:'assets'      },
   { path:'bulk-upload', element:<BulkUpload />,        page:'bulk-upload' },
   { path:'transfer',    element:<Transfer />,          page:'transfer'    },
   { path:'transfer/new',element:<NewTransfer />,       page:'transfer'    },

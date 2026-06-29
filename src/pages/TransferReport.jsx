@@ -79,7 +79,7 @@ function TransferRow({ t }) {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="bg-cream-100 dark:bg-gray-700">
-                        <th className="px-3 py-2 text-left font-semibold text-ink-400 uppercase tracking-wide">Asset ID</th>
+                        <th className="px-3 py-2 text-left font-semibold text-ink-400 uppercase tracking-wide">Asset Code</th>
                         <th className="px-3 py-2 text-left font-semibold text-ink-400 uppercase tracking-wide">Name</th>
                         <th className="px-3 py-2 text-left font-semibold text-ink-400 uppercase tracking-wide">Category</th>
                         <th className="px-3 py-2 text-left font-semibold text-ink-400 uppercase tracking-wide">Value</th>
@@ -89,10 +89,13 @@ function TransferRow({ t }) {
                     <tbody>
                       {t.items.map((item, i) => (
                         <tr key={i} className="border-t border-cream-100 dark:border-gray-600">
-                          <td className="px-3 py-1.5 font-mono text-brand-600 font-semibold">{item.asset_tag}</td>
+                          <td className="px-3 py-1.5 font-mono text-brand-600 font-semibold">
+                            {item.asset_code}
+                            {item.sub_sequence > 0 && <span className="text-ink-300 ml-1">· {item.sub_sequence}</span>}
+                          </td>
                           <td className="px-3 py-1.5 text-ink-700 dark:text-gray-200">{item.name}</td>
                           <td className="px-3 py-1.5 text-ink-500">{item.category || '—'}</td>
-                          <td className="px-3 py-1.5 text-ink-700 font-semibold">{formatINR(item.value)}</td>
+                          <td className="px-3 py-1.5 text-ink-700 font-semibold">{formatINR(item.acquisition_value)}</td>
                           <td className="px-3 py-1.5 text-ink-500">{item.dept_name || '—'}</td>
                         </tr>
                       ))}
@@ -207,12 +210,13 @@ export default function TransferReport() {
           'Transfer Status': t.status,
           'From Plant':    t.from_plant_name || '',
           'To Plant':      t.to_plant_name || '',
-          'Asset ID':      item.asset_tag,
+          'Asset Code':    item.asset_code || '',
+          'Sub Asset Code':`${item.asset_code || ''} ${item.sub_sequence ?? 0}`,
           'Asset Name':    item.name,
           'Category':      item.category || '',
           'Asset Class':   item.asset_class || '',
-          'Serial No.':    item.serial || '',
-          'Value (₹)':     item.value != null ? Number(item.value) : '',
+          'Serial No.':    item.serial_number || '',
+          'Value (₹)':     item.acquisition_value != null ? Number(item.acquisition_value) : '',
           'Department':    item.dept_name || '',
           'Assigned To':   item.assigned_employee || '',
           'Transfer Date': fmtDate(t.created_at),
@@ -249,7 +253,7 @@ export default function TransferReport() {
 
     if (assetRows.length > 0) {
       const ws2 = XLSX.utils.json_to_sheet(assetRows)
-      ws2['!cols'] = [{ wch:16 },{ wch:16 },{ wch:18 },{ wch:18 },{ wch:18 },{ wch:14 },{ wch:28 },{ wch:14 },{ wch:14 },{ wch:18 },{ wch:12 },{ wch:18 },{ wch:22 },{ wch:14 }]
+      ws2['!cols'] = [{ wch:16 },{ wch:16 },{ wch:18 },{ wch:18 },{ wch:18 },{ wch:14 },{ wch:16 },{ wch:28 },{ wch:14 },{ wch:14 },{ wch:18 },{ wch:12 },{ wch:18 },{ wch:22 },{ wch:14 }]
       XLSX.utils.book_append_sheet(wb, ws2, 'Transfer Assets')
     }
 

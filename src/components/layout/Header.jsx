@@ -170,7 +170,11 @@ export default function Header() {
 
   const unreadCount = notifications.filter(n => !n.is_read).length
 
-  const page = pageTitles[pathname] || { title:'AssetHub', sub:'' }
+  const page = pageTitles[pathname]
+    || (pathname.startsWith('/assets/')   ? { title:'Assets',    sub:'Asset Detail'    } : null)
+    || (pathname.endsWith('/return')      ? { title:'Transfers', sub:'Process Return'  } : null)
+    || (pathname.startsWith('/transfer/') ? { title:'Transfers', sub:'Transfer Detail' } : null)
+    || { title:'AssetHub', sub:'' }
   const initials = user?.name?.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase() || '?'
 
   function handleLogout() { logout(); navigate('/login') }

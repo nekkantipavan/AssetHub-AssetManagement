@@ -79,16 +79,16 @@ function Timeline({ transfer }) {
 // and for an individual return (flips bill-from/bill-to direction) ──
 function printChallan({ challanNo, date, fromName, fromLoc, toName, toLoc, transferType, items, approvedDate, label }) {
   const fmt = v => Number(v||0).toLocaleString('en-IN', { minimumFractionDigits:2, maximumFractionDigits:2 })
-  const totalVal = items.reduce((s, a) => s + Number(a.value||0), 0)
+  const totalVal = items.reduce((s, a) => s + Number(a.acquisition_value||0), 0)
   const rows = items.map((a, i) => `
     <tr>
       <td>${i+1}</td>
-      <td>${a.asset_tag}</td>
+      <td>${a.asset_code}</td>
       <td>${a.name}</td>
       <td>1</td>
       <td>EA</td>
-      <td>${fmt(a.value)}</td>
-      <td>${fmt(a.value)}</td>
+      <td>${fmt(a.acquisition_value)}</td>
+      <td>${fmt(a.acquisition_value)}</td>
     </tr>`).join('')
 
   const html = `<!DOCTYPE html>
@@ -463,7 +463,7 @@ export default function TransferDetail() {
             <table className="w-full min-w-[700px]">
               <thead>
                 <tr className="border-b border-cream-200 dark:border-gray-700">
-                  {['Asset ID','Asset Name','Category','Department','Assigned To','Value','Current Status','Returned'].map(h => (
+                  {['Asset Code','Asset Description','Category','Department','Assigned To','Value','Current Status','Returned'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -473,12 +473,15 @@ export default function TransferDetail() {
                   const returned = returnedAssetIds.has(a.asset_id)
                   return (
                     <tr key={a.asset_id} className="border-b border-cream-200 dark:border-gray-700 hover:bg-cream-50 dark:hover:bg-gray-750">
-                      <td className="px-4 py-3 text-brand-600 font-semibold text-xs">{a.asset_tag}</td>
+                      <td className="px-4 py-3 text-brand-600 font-semibold text-xs">
+                        {a.asset_code}
+                        {a.sub_sequence > 0 && <span className="text-ink-300 ml-1">· {a.sub_sequence}</span>}
+                      </td>
                       <td className="px-4 py-3 text-sm font-medium text-ink-900 dark:text-gray-100 max-w-[160px] truncate">{a.name}</td>
                       <td className="px-4 py-3"><span className="text-xs bg-cream-100 dark:bg-gray-700 text-ink-600 dark:text-gray-300 px-2 py-0.5 rounded-lg">{a.category||'—'}</span></td>
                       <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{a.dept_name||'—'}</td>
                       <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{a.assigned_employee||'—'}</td>
-                      <td className="px-4 py-3 text-sm font-semibold text-ink-700 dark:text-gray-200">{formatINR(a.value)}</td>
+                      <td className="px-4 py-3 text-sm font-semibold text-ink-700 dark:text-gray-200">{formatINR(a.acquisition_value)}</td>
                       <td className="px-4 py-3"><Badge label={a.asset_status}/></td>
                       <td className="px-4 py-3">
                         {returned
@@ -565,7 +568,7 @@ export default function TransferDetail() {
                 <div className="flex flex-wrap gap-2">
                   {ret.items.map(item => (
                     <span key={item.asset_id} className="text-xs bg-white dark:bg-gray-700 text-ink-700 dark:text-gray-200 px-2 py-1 rounded-lg border border-cream-200 dark:border-gray-600">
-                      {item.asset_tag} — {item.name}
+                      {item.asset_code} — {item.name}
                     </span>
                   ))}
                 </div>

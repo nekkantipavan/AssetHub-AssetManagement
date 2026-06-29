@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Edit2, Trash2, X, CheckCircle, Tag, Layers, Activity, Circle } from 'lucide-react'
+import { Plus, Edit2, Trash2, X, CheckCircle, Tag, Layers, Activity, Circle, Building2, Landmark } from 'lucide-react'
 import Button from '../components/common/Button'
 import Modal from '../components/common/Modal'
 import { Input } from '../components/common/FormFields'
@@ -8,10 +8,12 @@ import { getAssetMastersAll, createAssetMaster, updateAssetMaster, deleteAssetMa
 
 // Master types we manage on this page
 const MASTER_TYPES = [
-  { key:'category',    label:'Categories',    icon:Tag,      desc:'Asset categories (Laptop, Printer, etc.)' },
-  { key:'asset_class', label:'Asset Classes', icon:Layers,   desc:'Asset classification codes (IT Equipment, etc.)' },
-  { key:'asset_status',label:'Asset Status',  icon:Activity, desc:'Physical status of an asset (In Use, Available, etc.)' },
-  { key:'status',      label:'Record Status', icon:Circle,   desc:'Record lifecycle status (Active, Inactive)' },
+  { key:'category',     label:'Categories',    icon:Tag,       desc:'Asset categories (Laptop, Printer, etc.)' },
+  { key:'asset_class',  label:'Asset Classes', icon:Layers,    desc:'Asset classification codes (IT Equipment, etc.)' },
+  { key:'asset_status', label:'Asset Status',  icon:Activity,  desc:'Physical status of an asset (In Use, Available, etc.)' },
+  { key:'status',       label:'Record Status', icon:Circle,    desc:'Record lifecycle status (Active, Inactive)' },
+  { key:'company_code', label:'Company Codes', icon:Building2, desc:'Company codes used for asset ownership classification.' },
+  { key:'cost_center',  label:'Cost Centers',  icon:Landmark,  desc:'Cost center codes and descriptions used for cost allocation.' },
 ]
 
 export default function MastersManagement() {
@@ -25,7 +27,7 @@ export default function MastersManagement() {
   // Modal state
   const [modal,    setModal]    = useState(null) // 'add' | 'edit' | 'delete'
   const [selected, setSelected] = useState(null)
-  const [form,     setForm]     = useState({ value:'', sort_order:'0' })
+  const [form,     setForm]     = useState({ value:'', sort_order:'0', description:'' })
   const [saving,   setSaving]   = useState(false)
   const [err,      setErr]      = useState('')
   const [ok,       setOk]       = useState('')
@@ -42,12 +44,12 @@ export default function MastersManagement() {
   }
 
   function openAdd() {
-    setForm({ value:'', sort_order: String((data[activeTab]?.length || 0) + 1) })
+    setForm({ value:'', sort_order: String((data[activeTab]?.length || 0) + 1), description:'' })
     setErr(''); setOk(''); setModal('add')
   }
   function openEdit(item) {
     setSelected(item)
-    setForm({ value: item.value, sort_order: String(item.sort_order) })
+    setForm({ value: item.value, sort_order: String(item.sort_order), description: item.description || '' })
     setErr(''); setOk(''); setModal('edit')
   }
   function openDelete(item) {
@@ -59,11 +61,12 @@ export default function MastersManagement() {
     setErr('')
     if (!form.value.trim()) { setErr('Value is required'); return }
     setSaving(true)
+    const extra = activeTab === 'cost_center' ? { description: form.description.trim() || null } : {}
     try {
       if (modal === 'add') {
-        await createAssetMaster({ type: activeTab, value: form.value.trim(), sort_order: parseInt(form.sort_order) || 0 })
+        await createAssetMaster({ type: activeTab, value: form.value.trim(), sort_order: parseInt(form.sort_order) || 0, ...extra })
       } else {
-        await updateAssetMaster(selected.id, { value: form.value.trim(), sort_order: parseInt(form.sort_order) || 0, is_active: true })
+        await updateAssetMaster(selected.id, { value: form.value.trim(), sort_order: parseInt(form.sort_order) || 0, is_active: true, ...extra })
       }
       load(); close()
     } catch (e) {
@@ -152,7 +155,14 @@ export default function MastersManagement() {
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-xs text-ink-300 dark:text-gray-500 font-mono w-5 flex-shrink-0">{idx+1}</span>
-                    <span className="text-sm font-medium text-ink-800 dark:text-gray-200 truncate">{item.value}</span>
+                    {activeTab === 'cost_center' ? (
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-ink-800 dark:text-gray-200 truncate">{item.value}</div>
+                        {item.description && <div className="text-xs text-ink-400 dark:text-gray-400 truncate">{item.description}</div>}
+                      </div>
+                    ) : (
+                      <span className="text-sm font-medium text-ink-800 dark:text-gray-200 truncate">{item.value}</span>
+                    )}
                   </div>
                   {editable && (
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-2">
@@ -187,8 +197,16 @@ export default function MastersManagement() {
             label="Value *"
             value={form.value}
             onChange={e => setForm(p => ({ ...p, value: e.target.value }))}
-            placeholder={`e.g. ${activeTab === 'category' ? 'Laptop' : activeTab === 'asset_class' ? 'IT Equipment' : 'In Use'}`}
+            placeholder={`e.g. ${activeTab === 'category' ? 'Laptop' : activeTab === 'asset_class' ? 'IT Equipment' : activeTab === 'company_code' ? '1000' : activeTab === 'cost_center' ? 'CC-001' : 'In Use'}`}
           />
+          {activeTab === 'cost_center' && (
+            <Input
+              label="Description"
+              value={form.description}
+              onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+              placeholder="e.g. Marketing & Sales"
+            />
+          )}
           <Input
             label="Sort Order"
             value={form.sort_order}

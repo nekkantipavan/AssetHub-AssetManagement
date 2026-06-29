@@ -11,26 +11,29 @@ import { getMastersLookup, bulkUpload } from '../data/api'
 const STEPS = ['Select File', 'Preview & Validate', 'Import']
 
 // Columns we try to find (flexible — handles different header names)
-// Format: { canonical: 'Asset ID', aliases: [...], required: true }
+// Order matches assetFieldSpec.js §2 table exactly (S.No skipped — not a data column)
 const COLUMN_SPEC = [
-  { canonical:'Asset ID',           aliases:['asset id','asset_id','assetid'],                            required:true  },
-  { canonical:'Asset Name',         aliases:['asset name','asset_name','name','description'],              required:true  },
-  { canonical:'Serial Number',      aliases:['serial number','serial_number','serial','sn'],               required:true  },
-  { canonical:'Acquisition Value',  aliases:['acquisition value','acquisition_value','value','amount'],    required:true  },
-  { canonical:'Business Area',      aliases:['business area','business_area','plant code','plantcode'],    required:true  },
-  { canonical:'Plant',              aliases:['plant','plant name','plant_name'],                           required:false },
-  { canonical:'Department',         aliases:['department','dept'],                                         required:true  },
-  { canonical:'Assigned Employee',  aliases:['assigned employee','assigned_employee','employee'],          required:true  },
-  { canonical:'Status',             aliases:['status'],                                                    required:true  },
-  { canonical:'Asset Class',        aliases:['asset class','asset_class','asset class description'],       required:false },
-  { canonical:'Category',           aliases:['category'],                                                  required:false },
-  { canonical:'Make',               aliases:['make','brand','manufacturer'],                               required:false },
-  { canonical:'Model',              aliases:['model'],                                                     required:false },
-  { canonical:'Asset Status',       aliases:['asset status','asset_status'],                               required:false },
-  { canonical:'Date of Purchase',   aliases:['date of purchase','capitalized on','purchase date'],         required:false },
-  { canonical:'Warranty Date',      aliases:['warranty date','warranty_date'],                             required:false },
-  { canonical:'Supplier Name',      aliases:['supplier name','supplier','vendor'],                         required:false },
-  { canonical:'Note',               aliases:['note','notes','remarks'],                                    required:false },
+  { canonical:'Asset Code',              aliases:['asset code','asset_code','assetcode','asset id','asset_id'],                                                  required:true  },
+  { canonical:'Sub Asset Number',        aliases:['sub asset number','sub_asset_number','sub asset no','subasset'],                                              required:true  },
+  { canonical:'Capitalized On',          aliases:['capitalized on','capitalized_on','date of purchase','purchase date'],                                         required:true  },
+  { canonical:'Asset Description',       aliases:['asset description','asset_description','asset name','name','description'],                                    required:true  },
+  { canonical:'Acquisition Value',       aliases:['acquisition value','acquisition_value','value','amount'],                                                     required:true  },
+  { canonical:'Company Code',            aliases:['company code','company_code','companycode'],                                                                  required:true  },
+  { canonical:'Business Area Code',      aliases:['business area code','business area','business_area','plant code','plantcode'],                                required:true  },
+  { canonical:'Asset Class',             aliases:['asset class','asset_class','asset class description'],                                                        required:true  },
+  { canonical:'Cost Center',             aliases:['cost center','cost_center','costcenter'],                                                                     required:true  },
+  { canonical:'Serial Number',           aliases:['serial number','serial_number','serial','sn'],                                                                required:false },
+  { canonical:'Reference / Invoice No',  aliases:['reference / invoice no','reference/invoice no','reference invoice no','invoice no','invoice number','reference_invoice_no'], required:true },
+  { canonical:'Supplier Name',           aliases:['supplier name','supplier_name','supplier','vendor'],                                                          required:true  },
+  { canonical:'Manufacturer of Asset',   aliases:['manufacturer of asset','make','brand','manufacturer'],                                                        required:true  },
+  { canonical:'Fiscal Year',             aliases:['fiscal year','fiscal_year','year'],                                                                           required:true  },
+  { canonical:'Category',                aliases:['category'],                                                                                                   required:true  },
+  { canonical:'Department',              aliases:['department','dept'],                                                                                          required:true  },
+  { canonical:'Assigned Employee',       aliases:['assigned employee','assigned_employee','employee'],                                                           required:true  },
+  { canonical:'Status',                  aliases:['status'],                                                                                                     required:true  },
+  { canonical:'Asset Status',            aliases:['asset status','asset_status'],                                                                                required:true  },
+  { canonical:'Warranty Date',           aliases:['warranty date','warranty_date'],                                                                              required:false },
+  { canonical:'Note',                    aliases:['note','notes','remarks'],                                                                                     required:false },
 ]
 
 // Build a canonical map from actual column headers
@@ -73,7 +76,7 @@ export default function BulkUpload() {
   const [uploading,    setUploading]    = useState(false)
   const [uploadResult, setUploadResult] = useState(null)
   const [showResult,   setShowResult]   = useState(false)
-  const [masters,      setMasters]      = useState({ plants:[], departments:[], categories:[], asset_statuses:[] })
+  const [masters,      setMasters]      = useState({ plants:[], departments:[], categories:[], asset_classes:[], asset_statuses:[], company_codes:[], cost_centers:[] })
   const inputRef = useRef()
 
   useEffect(() => {
@@ -133,9 +136,14 @@ export default function BulkUpload() {
   function runValidation(rows, map) {
     const errs = []
 
-    const plantCodesLC = masters.plants.map(p => p.code.toLowerCase())
-    const plantNamesLC = masters.plants.map(p => p.name.toLowerCase())
-    const deptNamesLC  = masters.departments.map(d => d.name.toLowerCase())
+    const plantCodesLC    = masters.plants.map(p => p.code.toLowerCase())
+    const plantNamesLC    = masters.plants.map(p => p.name.toLowerCase())
+    const deptNamesLC     = masters.departments.map(d => d.name.toLowerCase())
+    const companyCodesLC  = masters.company_codes.map(c => c.toLowerCase())
+    const costCenterVals  = masters.cost_centers.map(c => (c.value ?? c).toLowerCase())
+    const categoriesLC    = masters.categories.map(c => c.toLowerCase())
+    const assetClassesLC  = masters.asset_classes.map(c => c.toLowerCase())
+    const assetStatusesLC = masters.asset_statuses.map(s => s.toLowerCase())
 
     const getV = (row, canonical) => {
       const h = map[canonical]
@@ -145,62 +153,110 @@ export default function BulkUpload() {
     rows.forEach((row, i) => {
       const rowNum = i + 2
 
-      // ── Required field checks ────────────────────────────────
-      if (!getV(row,'Asset ID'))          errs.push({ row:rowNum, field:'Asset ID',          error:'Asset ID is required' })
-      if (!getV(row,'Asset Name'))        errs.push({ row:rowNum, field:'Asset Name',        error:'Asset Name is required' })
-      if (!getV(row,'Serial Number'))     errs.push({ row:rowNum, field:'Serial Number',     error:'Serial Number is required' })
-      if (!getV(row,'Assigned Employee')) errs.push({ row:rowNum, field:'Assigned Employee', error:'Assigned Employee is required' })
+      // ── Simple required text fields ──────────────────────────
+      if (!getV(row,'Asset Code'))             errs.push({ row:rowNum, field:'Asset Code',             error:'Asset Code is required' })
+      if (!getV(row,'Asset Description'))      errs.push({ row:rowNum, field:'Asset Description',      error:'Asset Description is required' })
+      if (!getV(row,'Assigned Employee'))      errs.push({ row:rowNum, field:'Assigned Employee',      error:'Assigned Employee is required' })
+      if (!getV(row,'Reference / Invoice No')) errs.push({ row:rowNum, field:'Reference / Invoice No', error:'Reference / Invoice No is required' })
+      if (!getV(row,'Supplier Name'))          errs.push({ row:rowNum, field:'Supplier Name',          error:'Supplier Name is required' })
+      if (!getV(row,'Manufacturer of Asset'))  errs.push({ row:rowNum, field:'Manufacturer of Asset',  error:'Manufacturer of Asset is required' })
+      if (!getV(row,'Fiscal Year'))            errs.push({ row:rowNum, field:'Fiscal Year',            error:'Fiscal Year is required' })
+      if (!getV(row,'Capitalized On'))         errs.push({ row:rowNum, field:'Capitalized On',         error:'Capitalized On is required' })
 
-      // ── Acquisition Value ─────────────────────────────────────
-      const val = getV(row,'Acquisition Value').replace(/[,₹$]/g,'')
-      if (!val)                     errs.push({ row:rowNum, field:'Acquisition Value', error:'Acquisition Value is required' })
-      else if (isNaN(Number(val)))  errs.push({ row:rowNum, field:'Acquisition Value', error:`"${val}" is not a valid number` })
-
-      // ── Plant check — ALWAYS validate, even if masters list is empty ──
-      const ba = getV(row,'Business Area').toLowerCase()
-      const pn = getV(row,'Plant').toLowerCase()
-
-      if (!ba && !pn) {
-        errs.push({ row:rowNum, field:'Business Area', error:'Business Area (plant code) is required' })
-      } else if (masters.plants.length === 0) {
-        errs.push({
-          row:rowNum, field:'Business Area',
-          error:`No plants configured in the system yet. Go to Plants page and add a plant with code "${ba || pn}" first.`
-        })
-      } else {
-        const ok = plantCodesLC.includes(ba) || plantNamesLC.includes(pn) ||
-                   plantNamesLC.includes(ba) || plantCodesLC.includes(pn)
-        if (!ok) {
-          errs.push({
-            row:rowNum, field:'Business Area',
-            error:`"${ba || pn}" not found. Valid codes: ${masters.plants.map(p=>p.code).join(', ')}`
-          })
-        }
+      // ── Sub Asset Number: required integer >= 0 ──────────────
+      const subRaw = getV(row,'Sub Asset Number')
+      const subSeq = parseInt(subRaw, 10)
+      if (!subRaw) {
+        errs.push({ row:rowNum, field:'Sub Asset Number', error:'Sub Asset Number is required' })
+      } else if (isNaN(subSeq) || subSeq < 0) {
+        errs.push({ row:rowNum, field:'Sub Asset Number', error:`"${subRaw}" must be 0 or a positive integer` })
       }
 
-      // ── Department check — ALWAYS validate ────────────────────
-      const dn = getV(row,'Department').toLowerCase()
+      // ── Acquisition Value: required, numeric, non-negative ───
+      const valRaw = getV(row,'Acquisition Value').replace(/[,₹$]/g,'')
+      if (!valRaw) {
+        errs.push({ row:rowNum, field:'Acquisition Value', error:'Acquisition Value is required' })
+      } else if (isNaN(Number(valRaw))) {
+        errs.push({ row:rowNum, field:'Acquisition Value', error:`"${valRaw}" is not a valid number` })
+      } else if (Number(valRaw) < 0) {
+        errs.push({ row:rowNum, field:'Acquisition Value', error:'Acquisition Value cannot be negative' })
+      }
 
+      // ── Business Area Code → plant lookup ───────────────────
+      const ba = getV(row,'Business Area Code')
+      if (!ba) {
+        errs.push({ row:rowNum, field:'Business Area Code', error:'Business Area Code is required' })
+      } else if (masters.plants.length === 0) {
+        errs.push({ row:rowNum, field:'Business Area Code',
+          error:`No plants configured yet — go to Plants page and add one first.` })
+      } else if (!plantCodesLC.includes(ba.toLowerCase()) && !plantNamesLC.includes(ba.toLowerCase())) {
+        errs.push({ row:rowNum, field:'Business Area Code',
+          error:`"${ba}" not found. Valid codes: ${masters.plants.map(p=>p.code).join(', ')}` })
+      }
+
+      // ── Department ───────────────────────────────────────────
+      const dn = getV(row,'Department')
       if (!dn) {
         errs.push({ row:rowNum, field:'Department', error:'Department is required' })
       } else if (masters.departments.length === 0) {
-        errs.push({
-          row:rowNum, field:'Department',
-          error:`No departments configured in the system yet. Go to Departments page and add "${getV(row,'Department')}" first.`
-        })
-      } else if (!deptNamesLC.includes(dn)) {
-        errs.push({
-          row:rowNum, field:'Department',
-          error:`"${getV(row,'Department')}" not found. Valid: ${masters.departments.map(d=>d.name).join(', ')}`
-        })
+        errs.push({ row:rowNum, field:'Department',
+          error:`No departments configured yet — go to Departments page and add one first.` })
+      } else if (!deptNamesLC.includes(dn.toLowerCase())) {
+        errs.push({ row:rowNum, field:'Department',
+          error:`"${dn}" not found. Valid: ${masters.departments.map(d=>d.name).join(', ')}` })
       }
 
-      // ── Status check ────────────────────────────────────────
-      const st = getV(row,'Status').toLowerCase()
+      // ── Status enum ──────────────────────────────────────────
+      const st = getV(row,'Status')
       if (!st) {
         errs.push({ row:rowNum, field:'Status', error:'Status is required' })
-      } else if (!['active','inactive'].includes(st)) {
-        errs.push({ row:rowNum, field:'Status', error:`Must be Active or Inactive (got "${getV(row,'Status')}")` })
+      } else if (!['active','inactive'].includes(st.toLowerCase())) {
+        errs.push({ row:rowNum, field:'Status', error:`Must be Active or Inactive (got "${st}")` })
+      }
+
+      // ── Company Code ─────────────────────────────────────────
+      const cc = getV(row,'Company Code')
+      if (!cc) {
+        errs.push({ row:rowNum, field:'Company Code', error:'Company Code is required' })
+      } else if (companyCodesLC.length > 0 && !companyCodesLC.includes(cc.toLowerCase())) {
+        errs.push({ row:rowNum, field:'Company Code',
+          error:`"${cc}" not found in Company Code masters` })
+      }
+
+      // ── Cost Center ──────────────────────────────────────────
+      const ctr = getV(row,'Cost Center')
+      if (!ctr) {
+        errs.push({ row:rowNum, field:'Cost Center', error:'Cost Center is required' })
+      } else if (costCenterVals.length > 0 && !costCenterVals.includes(ctr.toLowerCase())) {
+        errs.push({ row:rowNum, field:'Cost Center',
+          error:`"${ctr}" not found in Cost Center masters` })
+      }
+
+      // ── Category ─────────────────────────────────────────────
+      const cat = getV(row,'Category')
+      if (!cat) {
+        errs.push({ row:rowNum, field:'Category', error:'Category is required' })
+      } else if (categoriesLC.length > 0 && !categoriesLC.includes(cat.toLowerCase())) {
+        errs.push({ row:rowNum, field:'Category',
+          error:`"${cat}" not found in Category masters` })
+      }
+
+      // ── Asset Class ──────────────────────────────────────────
+      const ac = getV(row,'Asset Class')
+      if (!ac) {
+        errs.push({ row:rowNum, field:'Asset Class', error:'Asset Class is required' })
+      } else if (assetClassesLC.length > 0 && !assetClassesLC.includes(ac.toLowerCase())) {
+        errs.push({ row:rowNum, field:'Asset Class',
+          error:`"${ac}" not found in Asset Class masters` })
+      }
+
+      // ── Asset Status ─────────────────────────────────────────
+      const ast = getV(row,'Asset Status')
+      if (!ast) {
+        errs.push({ row:rowNum, field:'Asset Status', error:'Asset Status is required' })
+      } else if (assetStatusesLC.length > 0 && !assetStatusesLC.includes(ast.toLowerCase())) {
+        errs.push({ row:rowNum, field:'Asset Status',
+          error:`"${ast}" not found in Asset Status masters` })
       }
     })
 
@@ -251,7 +307,7 @@ export default function BulkUpload() {
   const errorRowNums = [...new Set(clientErrors.map(e => e.row))]
   const validCount   = rawRows.length - errorRowNums.length
   const previewRows  = rawRows.slice(0, 5)
-  const KEY_COLS     = ['Asset ID','Asset Name','Business Area','Department','Assigned Employee','Acquisition Value','Status']
+  const KEY_COLS     = ['Asset Code','Sub Asset Number','Asset Description','Business Area Code','Department','Acquisition Value','Status']
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -549,13 +605,14 @@ export default function BulkUpload() {
           <h3 className="text-sm font-bold text-ink-900 dark:text-gray-100 mb-4">How It Works</h3>
           <div className="space-y-2">
             {[
-              'You can use the official template OR your own Excel — columns are detected automatically',
-              'Required columns: Asset ID, Asset Name, Serial Number, Acquisition Value, Business Area, Department, Assigned Employee, Status',
-              'Business Area = Plant code (e.g. 1100, CHN) — must match a plant in the system',
-              'Department name must match exactly (case-insensitive)',
-              'Assigned Employee is free text — no exact match needed',
-              'Rows with errors are skipped — all valid rows are always imported',
-              'Duplicate Asset IDs (already in the system) are automatically skipped',
+              'You can use the official template OR your own Excel — columns are detected automatically by name',
+              'Required columns: Asset Code, Sub Asset Number, Capitalized On, Asset Description, Acquisition Value, Company Code, Business Area Code, Asset Class, Cost Center, Reference / Invoice No, Supplier Name, Manufacturer of Asset, Fiscal Year, Category, Department, Assigned Employee, Status, Asset Status',
+              'Optional columns: Serial Number, Warranty Date, Note',
+              'Sub Asset Number = 0 for a standalone root asset; use 1, 2 … for sub-assets of the same Asset Code',
+              'Business Area Code = Plant code (e.g. BLR, CHN) — must match a plant configured in the system',
+              'Company Code, Cost Center, Category, Asset Class, and Asset Status must match values in Masters',
+              'Rows with errors are skipped individually — all valid rows are always imported',
+              'An Asset Code + Sub Asset Number pair that already exists is automatically skipped',
             ].map((g, i) => (
               <div key={i} className="flex items-start gap-2.5 text-sm text-ink-500 dark:text-gray-400">
                 <CheckCircle size={14} className="text-brand-500 mt-0.5 flex-shrink-0"/>

@@ -225,8 +225,8 @@ export default function ReturnProcessing() {
                 <thead>
                   <tr className="border-b border-cream-200 dark:border-gray-700">
                     <th className="px-4 py-3 w-10"></th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Asset ID</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Asset Name</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Asset Code</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Asset Description</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Category</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Department</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Value</th>
@@ -246,7 +246,10 @@ export default function ReturnProcessing() {
                             {checked && <CheckCircle size={10} className="text-white"/>}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-brand-600 font-semibold text-xs">{a.asset_tag}</td>
+                        <td className="px-4 py-3 text-brand-600 font-semibold text-xs">
+                          {a.asset_code}
+                          {a.sub_sequence > 0 && <span className="text-ink-300 ml-1">· {a.sub_sequence}</span>}
+                        </td>
                         <td className="px-4 py-3 text-sm font-medium text-ink-900 dark:text-gray-100">{a.name}</td>
                         <td className="px-4 py-3">
                           <span className="text-xs bg-cream-100 dark:bg-gray-700 text-ink-600 dark:text-gray-300 px-2 py-0.5 rounded-lg">
@@ -254,7 +257,7 @@ export default function ReturnProcessing() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{a.dept_name||'—'}</td>
-                        <td className="px-4 py-3 text-sm font-semibold text-ink-700 dark:text-gray-200">{formatINR(a.value)}</td>
+                        <td className="px-4 py-3 text-sm font-semibold text-ink-700 dark:text-gray-200">{formatINR(a.acquisition_value)}</td>
                       </tr>
                     )
                   })}

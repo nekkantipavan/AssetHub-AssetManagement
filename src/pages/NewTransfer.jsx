@@ -66,8 +66,8 @@ export default function NewTransfer() {
     const q = assetSearch.toLowerCase()
     const matchQ = !q ||
       a.name?.toLowerCase().includes(q) ||
-      a.asset_tag?.toLowerCase().includes(q) ||
-      a.serial?.toLowerCase().includes(q) ||
+      a.asset_code?.toLowerCase().includes(q) ||
+      a.serial_number?.toLowerCase().includes(q) ||
       a.assigned_employee?.toLowerCase().includes(q)
     const matchD = deptFilter === 'All' || a.dept_name === deptFilter
     return matchQ && matchD
@@ -81,7 +81,7 @@ export default function NewTransfer() {
     : []
 
   const selectedAssets = assets.filter(a => selectedIds.includes(a.id))
-  const totalValue = selectedAssets.reduce((s, a) => s + Number(a.value||0), 0)
+  const totalValue = selectedAssets.reduce((s, a) => s + Number(a.acquisition_value||0), 0)
 
   function toggleAsset(id) {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
@@ -287,7 +287,7 @@ export default function NewTransfer() {
               <AlertTriangle size={16} className="flex-shrink-0 mt-0.5"/>
               <span>
                 <strong>{blockedAssets.length} asset(s)</strong> from this plant are already in an active transfer and cannot be selected:
-                {' '}{blockedAssets.map(a => a.asset_tag).join(', ')}
+                {' '}{blockedAssets.map(a => a.asset_code).join(', ')}
               </span>
             </div>
           )}
@@ -298,7 +298,7 @@ export default function NewTransfer() {
               <div className="relative flex-1">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-300 dark:text-gray-500"/>
                 <input value={assetSearch} onChange={e => setAssetSearch(e.target.value)}
-                  placeholder="Search assets by name, ID, serial…"
+                  placeholder="Search assets by name, code, serial…"
                   className="w-full pl-9 pr-4 py-2 bg-cream-100 dark:bg-gray-700 rounded-2xl text-sm
                              text-ink-900 dark:text-gray-100 placeholder-ink-300 dark:placeholder-gray-500
                              focus:outline-none focus:ring-2 focus:ring-brand-300"/>
@@ -329,7 +329,7 @@ export default function NewTransfer() {
                         }}
                         className="rounded"/>
                     </th>
-                    {['Asset ID','Asset Name','Category','Department','Assigned To','Value','Status'].map(h => (
+                    {['Asset Code','Asset Description','Category','Department','Assigned To','Value','Status'].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -348,12 +348,15 @@ export default function NewTransfer() {
                             {checked && <CheckCircle size={10} className="text-white"/>}
                           </div>
                         </td>
-                        <td className="px-4 py-3"><span className="text-brand-600 font-semibold text-xs">{a.asset_tag}</span></td>
+                        <td className="px-4 py-3">
+                          <span className="text-brand-600 font-semibold text-xs">{a.asset_code}</span>
+                          {a.sub_sequence > 0 && <span className="text-ink-300 text-xs ml-1">· {a.sub_sequence}</span>}
+                        </td>
                         <td className="px-4 py-3 text-sm font-medium text-ink-900 dark:text-gray-100 max-w-[160px] truncate">{a.name}</td>
                         <td className="px-4 py-3"><span className="text-xs bg-cream-100 dark:bg-gray-700 text-ink-600 dark:text-gray-300 px-2 py-0.5 rounded-lg">{a.category||'—'}</span></td>
                         <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{a.dept_name||'—'}</td>
                         <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{a.assigned_employee||'—'}</td>
-                        <td className="px-4 py-3 text-sm font-semibold text-ink-700 dark:text-gray-200">{formatINR(a.value)}</td>
+                        <td className="px-4 py-3 text-sm font-semibold text-ink-700 dark:text-gray-200">{formatINR(a.acquisition_value)}</td>
                         <td className="px-4 py-3"><Badge label={a.status}/></td>
                       </tr>
                     )
@@ -416,8 +419,8 @@ export default function NewTransfer() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-cream-200 dark:border-gray-700">
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Asset ID</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Asset Name</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Asset Code</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Asset Description</th>
                     <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Category</th>
                     <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Department</th>
                     <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase">Value</th>
@@ -426,11 +429,14 @@ export default function NewTransfer() {
                 <tbody>
                   {selectedAssets.map(a => (
                     <tr key={a.id} className="border-b border-cream-200 dark:border-gray-700">
-                      <td className="px-4 py-2.5 text-brand-600 font-semibold text-xs">{a.asset_tag}</td>
+                      <td className="px-4 py-2.5 text-brand-600 font-semibold text-xs">
+                        {a.asset_code}
+                        {a.sub_sequence > 0 && <span className="text-ink-300 ml-1">· {a.sub_sequence}</span>}
+                      </td>
                       <td className="px-4 py-2.5 font-medium text-ink-900 dark:text-gray-100">{a.name}</td>
                       <td className="px-4 py-2.5 text-ink-500 dark:text-gray-400">{a.category||'—'}</td>
                       <td className="px-4 py-2.5 text-ink-500 dark:text-gray-400">{a.dept_name||'—'}</td>
-                      <td className="px-4 py-2.5 font-semibold text-ink-700 dark:text-gray-200">{formatINR(a.value)}</td>
+                      <td className="px-4 py-2.5 font-semibold text-ink-700 dark:text-gray-200">{formatINR(a.acquisition_value)}</td>
                     </tr>
                   ))}
                 </tbody>
