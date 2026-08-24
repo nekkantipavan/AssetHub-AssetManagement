@@ -6,9 +6,9 @@ import {
 } from 'lucide-react'
 import Button from '../components/common/Button'
 import { Badge } from '../components/common/Badge'
-import { useAuth } from '../context/AuthContext'
-import { getTransfer, completeTransfer, resendTransferApproval, resendReturnApproval, cancelReturn, getChallanSettings } from '../data/api'
+import { getTransfer, completeTransfer, resendTransferApproval, resendReturnApproval, cancelReturn, getChallanSettings, getChallans, uploadChallan, deleteChallan } from '../data/api'
 import { buildChallanHtml } from '../utils/challanTemplate'
+import { FileText, Download, Upload, Trash2, Eye, Folder } from 'lucide-react'
 
 const formatINR = v =>
   v == null || v === '' ? '—'
@@ -157,9 +157,17 @@ export default function TransferDetail() {
   const [cancelling, setCancelling] = useState(null)
   const [activeTab,  setActiveTab]  = useState('overview')
   const [challanSettings, setChallanSettings] = useState(null)
+  const [challanDocs, setChallanDocs] = useState([])
 
   useEffect(() => { load() }, [id])
   useEffect(() => { getChallanSettings().then(r => setChallanSettings(r.data)).catch(() => {}) }, [])
+  useEffect(() => { if (id) loadChallanDocs() }, [id])
+
+  function loadChallanDocs() {
+    getChallans({ transfer_id: id })
+      .then(r => setChallanDocs(r.data.documents || []))
+      .catch(() => {})
+  }
 
   function load() {
     setLoading(true)
@@ -380,6 +388,7 @@ export default function TransferDetail() {
           {[
             { key:'overview', label:'Assets' },
             ...(transfer.returns?.length > 0 ? [{ key:'returns', label:`Returns (${transfer.returns.length})` }] : []),
+            { key:'challans', label:`Challan Documents (${challanDocs.length})` },
           ].map(t => (
             <button key={t.key} onClick={() => setActiveTab(t.key)}
               className={`px-6 py-4 text-sm font-semibold transition-all
@@ -510,6 +519,50 @@ export default function TransferDetail() {
                 {ret.notes && <p className="text-xs text-ink-400 dark:text-gray-400">{ret.notes}</p>}
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Challans tab */}
+        {activeTab === 'challans' && (
+          <div className="p-5 space-y-4">
+            {challanDocs.length === 0 ? (
+              <div className="text-center py-8">
+                <FileText size={36} className="mx-auto text-ink-300 dark:text-gray-600 mb-2" />
+                <p className="text-sm font-semibold text-ink-700 dark:text-gray-300">No Challan Documents Attached</p>
+                <p className="text-xs text-ink-400 dark:text-gray-400 mt-1">
+                  Upload scanned PDFs or view system-generated challan copies in the Challan Vault.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {challanDocs.map(doc => (
+                  <div key={doc.id} className="bg-cream-50 dark:bg-gray-750 p-4 rounded-2xl border border-cream-200 dark:border-gray-700 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-950/50 text-red-600 dark:text-red-400 flex items-center justify-center">
+                        <FileText size={20} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-ink-900 dark:text-white">{doc.challan_no}</p>
+                        <p className="text-xs text-ink-400 dark:text-gray-400 flex items-center gap-2">
+                          <span>{doc.challan_type}</span>
+                          <span>·</span>
+                          <span className="font-mono bg-cream-200 dark:bg-gray-700 px-1.5 py-0.5 rounded">{doc.month_folder}</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    <a
+                      href={`/api/challans/${doc.id}/download`}
+                      download
+                      className="p-2 bg-white dark:bg-gray-700 text-brand-600 dark:text-brand-400 hover:bg-brand-50 rounded-xl shadow-xs border border-cream-200 dark:border-gray-600 transition-colors"
+                      title="Download PDF"
+                    >
+                      <Download size={16} />
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

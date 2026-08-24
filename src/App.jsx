@@ -27,6 +27,7 @@ import AssetReport        from './pages/AssetReport'
 import TransferReport     from './pages/TransferReport'
 import RoleManagement     from './pages/RoleManagement'
 import ChallanSettings    from './pages/ChallanSettings'
+import ChallanRepository  from './pages/ChallanRepository'
 
 // Pages that go inside the Layout (sidebar + header)
 const pages = [
@@ -41,6 +42,7 @@ const pages = [
   { path:'transfer/new',element:<NewTransfer />,       page:'transfer'    },
   { path:'transfer/:id',element:<TransferDetail />,    page:'transfer'    },
   { path:'transfer/:id/return', element:<ReturnProcessing />, page:'transfer' },
+  { path:'challans',          element:<ChallanRepository />, page:'transfer'    },
   { path:'plants',      element:<Plants />,            page:'plants'      },
   { path:'departments', element:<Departments />,       page:'departments' },
   { path:'masters',     element:<MastersManagement />, page:'departments' },

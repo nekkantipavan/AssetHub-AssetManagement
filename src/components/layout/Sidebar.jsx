@@ -2,7 +2,7 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Box, Upload, ArrowLeftRight,
   Building2, Layers, Tag, Mail, Users, ScrollText,
-  LogOut, Plus, List, FileBox, FileText, ShieldCheck, ClipboardList, Receipt
+  LogOut, Plus, List, FileBox, FileText, ShieldCheck, ClipboardList, Receipt, FolderArchive
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuth } from '../../context/AuthContext'
@@ -11,6 +11,7 @@ const allNavItems = [
   { label:'Dashboard',      icon:LayoutDashboard, path:'/dashboard',      page:'dashboard'      },
   { label:'Assets',         icon:Box,             path:'/assets',         page:'assets'         },
   { label:'Asset Requests', icon:ClipboardList,   path:'/asset-requests', page:'asset-requests' },
+  { label:'Challan Vault',  icon:FolderArchive,   path:'/challans',       page:'transfer'       },
   { label:'Bulk Upload',    icon:Upload,          path:'/bulk-upload',    page:'bulk-upload'    },
 ]
 

@@ -116,4 +116,11 @@ export const getDashboardStats = () => api.get('/dashboard/stats')
 export const getChallanSettings    = ()     => api.get('/challan-settings')
 export const updateChallanSettings = data   => api.put('/challan-settings', data)
 
+// ── Challan Documents & Repository ────────────────────────────
+export const getChallans           = params => api.get('/challans', { params })
+export const uploadChallan         = formData => api.post('/challans/upload', formData, { headers: { 'Content-Type': 'multipart/form-bytes' } })
+export const saveGeneratedChallan  = data   => api.post('/challans/save-generated', data)
+export const deleteChallan         = id     => api.delete(`/challans/${id}`)
+
 export default api
+

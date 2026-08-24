@@ -3653,6 +3653,250 @@ app.put('/api/role-permissions', authMiddleware, requireRole('Admin'), async (re
   } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
+// ════════════════════════════════════════════════════════════
+// CHALLAN DOCUMENTS & REPOSITORY (Month-Based Archiving)
+// ════════════════════════════════════════════════════════════
+
+const path   = require('path')
+const fs     = require('fs')
+const multer = require('multer')
+
+// Serve uploaded challan files securely
+app.use('/uploads', authMiddleware, express.static(path.join(__dirname, 'uploads')))
+
+const challanStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dateStr = req.body.challan_date || new Date().toISOString().substring(0, 10)
+    const monthFolder = dateStr.substring(0, 7) // 'YYYY-MM'
+    const targetDir = path.join(__dirname, 'uploads', 'challans', monthFolder)
+    fs.mkdirSync(targetDir, { recursive: true })
+    cb(null, targetDir)
+  },
+  filename: (req, file, cb) => {
+    const sanitizedNo = (req.body.challan_no || 'challan').replace(/[^a-zA-Z0-9_-]/g, '_')
+    const ext = path.extname(file.originalname) || '.pdf'
+    cb(null, `${Date.now()}_${sanitizedNo}${ext}`)
+  }
+})
+
+const uploadChallan = multer({
+  storage: challanStorage,
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB max limit
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg']
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true)
+    } else {
+      cb(new Error('Only PDF and image files (JPG, PNG) are allowed'))
+    }
+  }
+})
+
+// Upload legacy or scanned challan document
+app.post('/api/challans/upload', authMiddleware, requireRole('Admin', 'Manager'), (req, res, next) => {
+  uploadChallan.single('file')(req, res, err => {
+    if (err) return res.status(400).json({ error: err.message })
+    next()
+  })
+}, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No document file uploaded' })
+
+    const { challan_no, challan_type, challan_date, transfer_id, notes } = req.body
+    if (!challan_no || !challan_no.trim()) {
+      // Remove uploaded file if validation fails
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path)
+      return res.status(400).json({ error: 'Challan Number is required' })
+    }
+
+    const dateStr = challan_date || new Date().toISOString().substring(0, 10)
+    const monthFolder = dateStr.substring(0, 7)
+    const relPath = path.relative(__dirname, req.file.path).replace(/\\/g, '/')
+    const typeStr = challan_type || 'Legacy'
+
+    const r = await pool.query(
+      `INSERT INTO challan_documents (
+         transfer_id, challan_no, challan_type, challan_date, month_folder,
+         file_path, original_name, file_size, mime_type, uploaded_by, notes
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING *`,
+      [
+        transfer_id ? parseInt(transfer_id, 10) : null,
+        challan_no.trim(),
+        typeStr,
+        dateStr,
+        monthFolder,
+        relPath,
+        req.file.originalname,
+        req.file.size,
+        req.file.mimetype,
+        req.user.id,
+        notes || null
+      ]
+    )
+
+    await writeAudit(req.user.id, 'Upload Challan', 'Challan Document', `Uploaded challan ${challan_no} for month ${monthFolder}`, req.ip)
+    res.status(201).json(r.rows[0])
+  } catch (err) {
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path)
+    console.error('Challan upload error:', err)
+    res.status(500).json({ error: 'Failed to upload challan document' })
+  }
+})
+
+// Auto-save system generated challan PDF (base64)
+app.post('/api/challans/save-generated', authMiddleware, requireRole('Admin', 'Manager'), async (req, res) => {
+  try {
+    const { challan_no, challan_type, challan_date, transfer_id, base64_data, notes } = req.body
+    if (!challan_no || !base64_data) {
+      return res.status(400).json({ error: 'Challan number and PDF data are required' })
+    }
+
+    const dateStr = challan_date || new Date().toISOString().substring(0, 10)
+    const monthFolder = dateStr.substring(0, 7)
+    const targetDir = path.join(__dirname, 'uploads', 'challans', monthFolder)
+    fs.mkdirSync(targetDir, { recursive: true })
+
+    const sanitizedNo = challan_no.replace(/[^a-zA-Z0-9_-]/g, '_')
+    const filename = `${Date.now()}_${sanitizedNo}.pdf`
+    const absolutePath = path.join(targetDir, filename)
+    const relPath = path.relative(__dirname, absolutePath).replace(/\\/g, '/')
+
+    // Convert base64 data to buffer and write to disk
+    const base64Clean = base64_data.replace(/^data:application\/pdf;base64,/, '')
+    const buffer = Buffer.from(base64Clean, 'base64')
+    fs.writeFileSync(absolutePath, buffer)
+
+    const r = await pool.query(
+      `INSERT INTO challan_documents (
+         transfer_id, challan_no, challan_type, challan_date, month_folder,
+         file_path, original_name, file_size, mime_type, uploaded_by, notes
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING *`,
+      [
+        transfer_id ? parseInt(transfer_id, 10) : null,
+        challan_no.trim(),
+        challan_type || 'Delivery',
+        dateStr,
+        monthFolder,
+        relPath,
+        `${sanitizedNo}.pdf`,
+        buffer.length,
+        'application/pdf',
+        req.user.id,
+        notes || 'System auto-generated PDF'
+      ]
+    )
+
+    await writeAudit(req.user.id, 'Save System Challan', 'Challan Document', `Saved system challan ${challan_no} to month ${monthFolder}`, req.ip)
+    res.status(201).json(r.rows[0])
+  } catch (err) {
+    console.error('Save generated challan error:', err)
+    res.status(500).json({ error: 'Failed to save generated challan PDF' })
+  }
+})
+
+// Query & List Challans (with month folders & filters)
+app.get('/api/challans', authMiddleware, async (req, res) => {
+  try {
+    const { month, search, type, transfer_id } = req.query
+
+    // Fetch distinct month folders available in the system
+    const monthRes = await pool.query(
+      `SELECT month_folder, COUNT(*)::int as count 
+       FROM challan_documents 
+       GROUP BY month_folder 
+       ORDER BY month_folder DESC`
+    )
+
+    let query = `
+      SELECT c.*, u.full_name as uploader_name, t.transfer_code
+      FROM challan_documents c
+      LEFT JOIN users u ON c.uploaded_by = u.id
+      LEFT JOIN transfers t ON c.transfer_id = t.id
+      WHERE 1=1
+    `
+    const params = []
+
+    if (month && month.trim()) {
+      params.push(month.trim())
+      query += ` AND c.month_folder = $${params.length}`
+    }
+
+    if (type && type.trim()) {
+      params.push(type.trim())
+      query += ` AND c.challan_type = $${params.length}`
+    }
+
+    if (transfer_id) {
+      params.push(parseInt(transfer_id, 10))
+      query += ` AND c.transfer_id = $${params.length}`
+    }
+
+    if (search && search.trim()) {
+      params.push(`%${search.trim()}%`)
+      query += ` AND (c.challan_no ILIKE $${params.length} OR c.notes ILIKE $${params.length} OR c.original_name ILIKE $${params.length})`
+    }
+
+    query += ` ORDER BY c.created_at DESC`
+
+    const docRes = await pool.query(query, params)
+
+    res.json({
+      documents: docRes.rows,
+      months: monthRes.rows
+    })
+  } catch (err) {
+    console.error('Get challans error:', err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// Download/View Challan Document
+app.get('/api/challans/:id/download', authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10)
+    const r = await pool.query('SELECT * FROM challan_documents WHERE id = $1', [id])
+    if (!r.rows.length) return res.status(404).json({ error: 'Challan document not found' })
+
+    const doc = r.rows[0]
+    const absolutePath = path.join(__dirname, doc.file_path)
+
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ error: 'Physical file not found on disk' })
+    }
+
+    res.download(absolutePath, doc.original_name)
+  } catch (err) {
+    console.error('Download challan error:', err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// Delete Challan Document (Admin only)
+app.delete('/api/challans/:id', authMiddleware, requireRole('Admin'), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10)
+    const r = await pool.query('SELECT * FROM challan_documents WHERE id = $1', [id])
+    if (!r.rows.length) return res.status(404).json({ error: 'Challan document not found' })
+
+    const doc = r.rows[0]
+    const absolutePath = path.join(__dirname, doc.file_path)
+
+    await pool.query('DELETE FROM challan_documents WHERE id = $1', [id])
+
+    if (fs.existsSync(absolutePath)) {
+      fs.unlinkSync(absolutePath)
+    }
+
+    await writeAudit(req.user.id, 'Delete Challan', 'Challan Document', `Deleted challan document ${doc.challan_no}`, req.ip)
+    res.json({ message: 'Challan document deleted successfully' })
+  } catch (err) {
+    console.error('Delete challan error:', err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 // ============================================================
 
 // ── Global error handler — never leak stack traces / internal paths ──
@@ -3669,3 +3913,4 @@ app.use((err, req, res, next) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`)
 });
+
