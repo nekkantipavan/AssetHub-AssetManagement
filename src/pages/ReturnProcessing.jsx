@@ -21,6 +21,7 @@ export default function ReturnProcessing() {
   const [form,       setForm]       = useState({
     returned_by: '',
     return_date: new Date().toISOString().split('T')[0],
+    dept_head_email: '',
     manager_email: '',
     notes: ''
   })
@@ -34,8 +35,12 @@ export default function ReturnProcessing() {
         setTransfer(t.data)
         setReturnable(r.data)
         setEmailOpts(e.data)
-        // Pre-fill manager email with the same one used for the original transfer
-        setForm(p => ({ ...p, manager_email: t.data.manager_email || '' }))
+        // Pre-fill approver emails from the original transfer
+        setForm(p => ({
+          ...p,
+          dept_head_email: t.data.dept_head_email || '',
+          manager_email: t.data.manager_email || ''
+        }))
         setLoading(false)
       })
       .catch(() => setLoading(false))
@@ -56,23 +61,25 @@ export default function ReturnProcessing() {
     setErr('')
     if (!form.returned_by.trim())  { setErr('Returned by is required'); return }
     if (!form.return_date)         { setErr('Return date is required'); return }
-    if (!form.manager_email)       { setErr('Select an approver email for return approval'); return }
+    if (!form.dept_head_email)     { setErr('Please select a Department Head approver'); return }
+    if (!form.manager_email)       { setErr('Please select a Manager approver'); return }
     if (selected.length === 0)     { setErr('Select at least one asset to return'); return }
 
     const isPartial = selected.length < returnable.length
     const msg = isPartial
-      ? `Submit return for ${selected.length} of ${returnable.length} assets? An approval email will be sent.`
-      : `Submit return for all ${selected.length} assets? An approval email will be sent.`
+      ? `Submit return for ${selected.length} of ${returnable.length} assets? An approval email will be sent to the Department Head.`
+      : `Submit return for all ${selected.length} assets? An approval email will be sent to the Department Head.`
     if (!window.confirm(msg)) return
 
     setSubmitting(true)
     try {
       const r = await createReturn(id, {
-        asset_ids:     selected,
-        returned_by:   form.returned_by.trim(),
-        return_date:   form.return_date,
-        manager_email: form.manager_email,
-        notes:         form.notes || null,
+        asset_ids:       selected,
+        returned_by:     form.returned_by.trim(),
+        return_date:     form.return_date,
+        dept_head_email: form.dept_head_email,
+        manager_email:   form.manager_email,
+        notes:           form.notes || null,
       })
       if (r.data.email_warning) {
         alert(`Return submitted but: ${r.data.email_warning}`)
@@ -91,6 +98,9 @@ export default function ReturnProcessing() {
   const allReturned = (transfer.returns || []).flatMap(r => r.items || [])
   const totalInTransfer = transfer.items?.length || 0
 
+  const deptHeadOpts = emailOpts.filter(e => e.role === 'Department Head')
+  const managerOpts  = emailOpts.filter(e => e.role !== 'Department Head')
+
   // Success state — return submitted, awaiting approval
   if (submitted) {
     return (
@@ -101,8 +111,8 @@ export default function ReturnProcessing() {
           </div>
           <h2 className="text-lg font-bold text-ink-900 dark:text-gray-100 mb-1">Return Submitted for Approval</h2>
           <p className="text-sm text-ink-400 dark:text-gray-400 max-w-sm mx-auto">
-            An approval email has been sent to <strong>{form.manager_email}</strong>.
-            The {selected.length} selected asset(s) will move back to {transfer.from_plant_name} once approved.
+            An approval email has been sent to <strong>{form.dept_head_email}</strong> (Department Head).
+            Once approved, it will be forwarded to <strong>{form.manager_email}</strong> for final approval.
           </p>
           <div className="mt-6">
             <Button onClick={() => navigate(`/transfer/${id}`)}>Back to Transfer</Button>
@@ -174,19 +184,35 @@ export default function ReturnProcessing() {
                 value={form.return_date}
                 onChange={e => setForm(p => ({ ...p, return_date: e.target.value }))}
               />
-              <div className="col-span-2">
-                <Select label="Send Approval Email To *" value={form.manager_email}
-                        onChange={e => setForm(p => ({ ...p, manager_email: e.target.value }))}>
-                  <option value="">— Select Approver —</option>
-                  {emailOpts.map(em => (
+              <div>
+                <Select label="Department Head Approval *" value={form.dept_head_email}
+                        onChange={e => setForm(p => ({ ...p, dept_head_email: e.target.value }))}>
+                  <option value="">— Select Department Head —</option>
+                  {deptHeadOpts.map(em => (
                     <option key={em.id} value={em.email}>
                       {em.name} — {em.email}{em.department ? ` (${em.department})` : ''}
                     </option>
                   ))}
                 </Select>
-                {emailOpts.length === 0 && (
+                {deptHeadOpts.length === 0 && (
                   <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                    ⚠ No approvers configured. Go to Email Masters to add one.
+                    ⚠ No Department Head approvers configured. Go to System → Email Masters to add one.
+                  </p>
+                )}
+              </div>
+              <div>
+                <Select label="Manager Approval *" value={form.manager_email}
+                        onChange={e => setForm(p => ({ ...p, manager_email: e.target.value }))}>
+                  <option value="">— Select Manager —</option>
+                  {managerOpts.map(em => (
+                    <option key={em.id} value={em.email}>
+                      {em.name} — {em.email}{em.department ? ` (${em.department})` : ''}
+                    </option>
+                  ))}
+                </Select>
+                {managerOpts.length === 0 && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                    ⚠ No Manager approvers configured. Go to System → Email Masters to add one.
                   </p>
                 )}
               </div>

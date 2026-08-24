@@ -7,7 +7,7 @@ import { Input, Select } from '../components/common/FormFields'
 import { useAuth } from '../context/AuthContext'
 import { getPlants, createPlant, updatePlant, deletePlant } from '../data/api'
 
-const EMPTY = { code:'', name:'', location:'', head:'', status:'Active' }
+const EMPTY = { code:'', name:'', location:'', head:'', status:'Active', challan_prefix:'' }
 
 export default function Plants() {
   const { canEdit } = useAuth()
@@ -29,7 +29,7 @@ export default function Plants() {
   }, [])
 
   function openAdd()       { setForm(EMPTY); setFormErr(''); setModal('add') }
-  function openEdit(p)     { setSelected(p); setForm({ code:p.code, name:p.name, location:p.location||'', head:p.head||'', status:p.status }); setFormErr(''); setModal('edit') }
+  function openEdit(p)     { setSelected(p); setForm({ code:p.code, name:p.name, location:p.location||'', head:p.head||'', status:p.status, challan_prefix:p.challan_prefix||'' }); setFormErr(''); setModal('edit') }
   function openDelete(p)   { setSelected(p); setFormErr(''); setModal('delete') }
   function close()         { setModal(null); setSelected(null) }
 
@@ -96,7 +96,7 @@ export default function Plants() {
           <table className="w-full min-w-[1200px]">
             <thead>
               <tr className="border-b border-cream-200">
-                {['#','Plant Name','Code','Location','Assets','Plant Head','Status','Actions'].map(h => (
+                {['#','Plant Name','Code','Challan Prefix','Location','Assets','Plant Head','Status','Actions'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -115,6 +115,11 @@ export default function Plants() {
                   </td>
                   <td className="px-4 py-3">
                     <span className="font-mono text-xs bg-cream-100 dark:bg-gray-800 px-2 py-1 rounded-lg">{p.code}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {p.challan_prefix
+                      ? <span className="font-mono text-xs bg-orange-soft dark:bg-gray-700 text-brand-700 dark:text-brand-400 px-2 py-1 rounded-lg">{p.challan_prefix}</span>
+                      : <span className="text-xs text-ink-300 dark:text-gray-500">—</span>}
                   </td>
                   <td className="px-4 py-3 text-sm text-ink-500">{p.location || '—'}</td>
                   <td className="px-4 py-3 text-sm font-semibold">{p.asset_count || 0}</td>
@@ -154,6 +159,11 @@ export default function Plants() {
             <Select label="Status" name="status" value={form.status} onChange={handleChange}>
               <option>Active</option><option>Inactive</option>
             </Select>
+            <Input label="Challan Prefix" name="challan_prefix" value={form.challan_prefix} onChange={handleChange}
+              placeholder="e.g. NSPL" className="col-span-2" />
+            <p className="col-span-2 -mt-3 text-xs text-ink-300 dark:text-gray-500">
+              Used on printed delivery/return challans, e.g. <span className="font-mono">NSPL-AST-2627-001</span>. Multiple plants can share the same prefix.
+            </p>
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={close} disabled={saving}>Cancel</Button>

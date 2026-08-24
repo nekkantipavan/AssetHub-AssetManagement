@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import {
   Upload, FileSpreadsheet, CheckCircle, XCircle,
-  AlertCircle, Download, X, Eye, RefreshCw, Info
+  AlertCircle, Download, X, Eye, RefreshCw, Info, ChevronDown, ChevronUp
 } from 'lucide-react'
 import Button from '../components/common/Button'
 import Modal from '../components/common/Modal'
@@ -77,6 +77,7 @@ export default function BulkUpload() {
   const [uploadResult, setUploadResult] = useState(null)
   const [showResult,   setShowResult]   = useState(false)
   const [masters,      setMasters]      = useState({ plants:[], departments:[], categories:[], asset_classes:[], asset_statuses:[], company_codes:[], cost_centers:[] })
+  const [showMastersRef, setShowMastersRef] = useState(false)
   const inputRef = useRef()
 
   useEffect(() => {
@@ -350,37 +351,6 @@ export default function BulkUpload() {
         </a>
       </div>
 
-      {/* ── Masters reference card ───────────────────────────── */}
-      {masters.plants.length > 0 && step === 0 && (
-        <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-card p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <Info size={14} className="text-brand-500"/>
-            <p className="text-xs font-bold text-ink-700 dark:text-gray-200 uppercase tracking-wide">Use These Exact Values in Your File</p>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-xs font-semibold text-ink-500 dark:text-gray-400 mb-2">Business Area (Plant Codes)</p>
-              <div className="space-y-1">
-                {masters.plants.map(p => (
-                  <div key={p.id} className="flex items-center gap-2 text-xs">
-                    <span className="font-mono bg-cream-100 dark:bg-gray-700 px-2 py-0.5 rounded text-brand-600 font-bold">{p.code}</span>
-                    <span className="text-ink-500 dark:text-gray-400">{p.name}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-ink-500 dark:text-gray-400 mb-2">Departments</p>
-              <div className="space-y-1">
-                {masters.departments.map(d => (
-                  <div key={d.id} className="text-xs text-ink-600 dark:text-gray-300 bg-cream-100 dark:bg-gray-700 px-2 py-1 rounded-lg">{d.name}</div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── Drop zone (step 0) ───────────────────────────────── */}
       {step === 0 && (
         <div
@@ -398,6 +368,49 @@ export default function BulkUpload() {
           <p className="font-bold text-ink-900 dark:text-gray-100 text-lg">Drop your file here</p>
           <p className="text-sm text-ink-400 dark:text-gray-400 mt-1">or click to browse · .xlsx, .xls, .csv supported</p>
           <p className="text-xs text-ink-300 dark:text-gray-500 mt-2">Your own Excel is fine — we'll detect the columns automatically</p>
+        </div>
+      )}
+
+      {/* ── Masters reference (collapsed by default) ─────────── */}
+      {masters.plants.length > 0 && step === 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-card overflow-hidden">
+          <button
+            onClick={() => setShowMastersRef(v => !v)}
+            className="w-full flex items-center gap-2 px-5 py-4 text-left hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors"
+          >
+            <Info size={14} className="text-brand-500 flex-shrink-0"/>
+            <p className="text-xs font-bold text-ink-700 dark:text-gray-200 uppercase tracking-wide flex-1">Use These Exact Values in Your File</p>
+            {showMastersRef ? <ChevronUp size={16} className="text-ink-400"/> : <ChevronDown size={16} className="text-ink-400"/>}
+          </button>
+          {showMastersRef && (
+            <div className="px-5 pb-5 grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-xs font-semibold text-ink-500 dark:text-gray-400 mb-2">
+                  Business Area (Plant Codes) <span className="text-ink-300 dark:text-gray-500 font-normal">· {masters.plants.length}</span>
+                </p>
+                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-1">
+                  {masters.plants.map(p => (
+                    <span key={p.id}
+                      className="inline-flex items-center gap-1.5 text-xs bg-cream-100 dark:bg-gray-700 px-2 py-1 rounded-lg"
+                      title={p.name}>
+                      <span className="font-mono text-brand-600 font-bold">{p.code}</span>
+                      <span className="text-ink-500 dark:text-gray-400 max-w-[160px] truncate">{p.name}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-ink-500 dark:text-gray-400 mb-2">
+                  Departments <span className="text-ink-300 dark:text-gray-500 font-normal">· {masters.departments.length}</span>
+                </p>
+                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-1">
+                  {masters.departments.map(d => (
+                    <span key={d.id} className="text-xs text-ink-600 dark:text-gray-300 bg-cream-100 dark:bg-gray-700 px-2 py-1 rounded-lg">{d.name}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

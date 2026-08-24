@@ -7,6 +7,18 @@
 const nodemailer = require('nodemailer')
 require('dotenv').config()
 
+// HTML-escape any user-supplied value before interpolating it into email markup.
+// Prevents HTML/script injection via asset names, notes, reasons, etc.
+function esc(v) {
+  if (v == null) return ''
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function createTransporter() {
   return nodemailer.createTransport({
     host:   process.env.SMTP_HOST || 'smtp.office365.com',
@@ -42,10 +54,10 @@ function buildChallanTable(assets) {
   const rows = assets.map((a, i) => `
     <tr>
       <td style="padding:8px;border:1px solid #ddd;font-size:13px">${i+1}</td>
-      <td style="padding:8px;border:1px solid #ddd;font-size:13px">${a.asset_tag}</td>
-      <td style="padding:8px;border:1px solid #ddd;font-size:13px">${a.name}</td>
-      <td style="padding:8px;border:1px solid #ddd;font-size:13px">${a.category || '—'}</td>
-      <td style="padding:8px;border:1px solid #ddd;font-size:13px">${a.dept_name || '—'}</td>
+      <td style="padding:8px;border:1px solid #ddd;font-size:13px">${esc(a.asset_tag)}</td>
+      <td style="padding:8px;border:1px solid #ddd;font-size:13px">${esc(a.name)}</td>
+      <td style="padding:8px;border:1px solid #ddd;font-size:13px">${esc(a.category || '—')}</td>
+      <td style="padding:8px;border:1px solid #ddd;font-size:13px">${esc(a.dept_name || '—')}</td>
       <td style="padding:8px;border:1px solid #ddd;font-size:13px">${fmt(a.value)}</td>
     </tr>`).join('')
 
@@ -127,27 +139,27 @@ function buildApprovalEmail({ transfer, fromPlant, toPlant, initiatedBy, assets,
     <div style="background-color:#f59e0b;padding:28px 32px">
       <h1 style="color:#ffffff;margin:0;font-size:22px;font-family:Arial,sans-serif">Asset Transfer Approval Request</h1>
       <p style="color:#ffffff;margin:6px 0 0;font-size:14px;font-family:Arial,sans-serif">
-        Transfer ID: <strong>${transfer.transfer_code}</strong>
+        Transfer ID: <strong>${esc(transfer.transfer_code)}</strong>
       </p>
     </div>
 
     <div style="padding:28px 32px">
       <p style="font-size:15px;margin:0 0 20px">
-        <strong>${initiatedBy}</strong> has initiated an asset transfer that requires your approval.
+        <strong>${esc(initiatedBy)}</strong> has initiated an asset transfer that requires your approval.
       </p>
 
       <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
         <tr>
           <td style="padding:10px;background:#fef3c7;font-size:12px;color:#92400e;font-weight:bold;width:40%">FROM PLANT</td>
-          <td style="padding:10px;background:#fef3c7;font-size:14px;font-weight:600">${fromPlant}</td>
+          <td style="padding:10px;background:#fef3c7;font-size:14px;font-weight:600">${esc(fromPlant)}</td>
         </tr>
         <tr>
           <td style="padding:10px;background:#f8f6f2;font-size:12px;color:#6b7280;font-weight:bold">TO PLANT</td>
-          <td style="padding:10px;background:#f8f6f2;font-size:14px;font-weight:600">${toPlant}</td>
+          <td style="padding:10px;background:#f8f6f2;font-size:14px;font-weight:600">${esc(toPlant)}</td>
         </tr>
         <tr>
           <td style="padding:10px;background:#fef3c7;font-size:12px;color:#92400e;font-weight:bold">TRANSFER TYPE</td>
-          <td style="padding:10px;background:#fef3c7;font-size:14px">${transfer.transfer_type}</td>
+          <td style="padding:10px;background:#fef3c7;font-size:14px">${esc(transfer.transfer_type)}</td>
         </tr>
         <tr>
           <td style="padding:10px;background:#f8f6f2;font-size:12px;color:#6b7280;font-weight:bold">TOTAL ASSETS</td>
@@ -156,7 +168,7 @@ function buildApprovalEmail({ transfer, fromPlant, toPlant, initiatedBy, assets,
         ${transfer.notes ? `
         <tr>
           <td style="padding:10px;background:#fef3c7;font-size:12px;color:#92400e;font-weight:bold">NOTES</td>
-          <td style="padding:10px;background:#fef3c7;font-size:14px">${transfer.notes}</td>
+          <td style="padding:10px;background:#fef3c7;font-size:14px">${esc(transfer.notes)}</td>
         </tr>` : ''}
       </table>
 
@@ -207,28 +219,28 @@ function buildReturnApprovalEmail({ transferReturn, transfer, fromPlant, toPlant
     <div style="background-color:#0d9488;padding:28px 32px">
       <h1 style="color:#ffffff;margin:0;font-size:22px;font-family:Arial,sans-serif">Asset Return Approval Request</h1>
       <p style="color:#ffffff;margin:6px 0 0;font-size:14px;font-family:Arial,sans-serif">
-        Return ID: <strong>${transferReturn.return_code}</strong> &nbsp;·&nbsp;
-        Original Transfer: <strong>${transfer.transfer_code}</strong>
+        Return ID: <strong>${esc(transferReturn.return_code)}</strong> &nbsp;·&nbsp;
+        Original Transfer: <strong>${esc(transfer.transfer_code)}</strong>
       </p>
     </div>
 
     <div style="padding:28px 32px">
       <p style="font-size:15px;margin:0 0 20px">
-        <strong>${returnedBy}</strong> has initiated a return of assets that requires your approval.
+        <strong>${esc(returnedBy)}</strong> has initiated a return of assets that requires your approval.
       </p>
 
       <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
         <tr>
           <td style="padding:10px;background:#ccfbf1;font-size:12px;color:#0f766e;font-weight:bold;width:40%">RETURN TYPE</td>
-          <td style="padding:10px;background:#ccfbf1;font-size:14px;font-weight:600">${returnTypeLabel}</td>
+          <td style="padding:10px;background:#ccfbf1;font-size:14px;font-weight:600">${esc(returnTypeLabel)}</td>
         </tr>
         <tr>
           <td style="padding:10px;background:#f8f6f2;font-size:12px;color:#6b7280;font-weight:bold">RETURNING FROM</td>
-          <td style="padding:10px;background:#f8f6f2;font-size:14px;font-weight:600">${toPlant}</td>
+          <td style="padding:10px;background:#f8f6f2;font-size:14px;font-weight:600">${esc(toPlant)}</td>
         </tr>
         <tr>
           <td style="padding:10px;background:#ccfbf1;font-size:12px;color:#0f766e;font-weight:bold">RETURNING TO</td>
-          <td style="padding:10px;background:#ccfbf1;font-size:14px;font-weight:600">${fromPlant}</td>
+          <td style="padding:10px;background:#ccfbf1;font-size:14px;font-weight:600">${esc(fromPlant)}</td>
         </tr>
         <tr>
           <td style="padding:10px;background:#f8f6f2;font-size:12px;color:#6b7280;font-weight:bold">ASSETS IN THIS RETURN</td>
@@ -237,7 +249,7 @@ function buildReturnApprovalEmail({ transferReturn, transfer, fromPlant, toPlant
         ${transferReturn.notes ? `
         <tr>
           <td style="padding:10px;background:#ccfbf1;font-size:12px;color:#0f766e;font-weight:bold">NOTES</td>
-          <td style="padding:10px;background:#ccfbf1;font-size:14px">${transferReturn.notes}</td>
+          <td style="padding:10px;background:#ccfbf1;font-size:14px">${esc(transferReturn.notes)}</td>
         </tr>` : ''}
       </table>
 
@@ -271,13 +283,13 @@ function buildReturnApprovalEmail({ transferReturn, transfer, fromPlant, toPlant
 }
 
 // ── Approval result page (shown after clicking approve/reject) ──
-function buildApprovalResultHtml(approved, code, reason, type = 'Transfer') {
+function buildApprovalResultHtml(approved, code, reason, type = 'Transfer', extraNote = null) {
   const color = approved ? '#16a34a' : '#dc2626'
   const icon  = approved ? '✓' : '✗'
   const title = approved ? `${type} Approved` : `${type} Rejected`
   const msg   = approved
-    ? `${type} <strong>${code}</strong> has been approved successfully.`
-    : `${type} <strong>${code}</strong> has been rejected.`
+    ? `${type} <strong>${esc(code)}</strong> has been approved successfully.`
+    : `${type} <strong>${esc(code)}</strong> has been rejected.`
 
   return `<!DOCTYPE html>
 <html>
@@ -289,8 +301,111 @@ function buildApprovalResultHtml(approved, code, reason, type = 'Transfer') {
     </div>
     <h1 style="color:#2e2e2e;font-size:24px;margin:0 0 12px">${title}</h1>
     <p style="color:#6b7280;font-size:15px;margin:0 0 24px">${msg}</p>
-    ${reason ? `<p style="color:#6b7280;font-size:13px;background:#f8f6f2;padding:12px;border-radius:8px">Reason: ${reason}</p>` : ''}
+    ${reason ? `<p style="color:#6b7280;font-size:13px;background:#f8f6f2;padding:12px;border-radius:8px">Reason: ${esc(reason)}</p>` : ''}
+    ${extraNote ? `<p style="color:#6b7280;font-size:13px;margin-top:16px">${esc(extraNote)}</p>` : ''}
     <p style="color:#9ca3af;font-size:13px;margin-top:24px">You can close this tab.</p>
+  </div>
+</body>
+</html>`
+}
+
+// ════════════════════════════════════════════════════════════
+// ASSET REQUEST APPROVAL EMAIL
+// ════════════════════════════════════════════════════════════
+
+function buildAssetRequestApprovalEmail({ request, requestedBy, deptName, items, approveUrl, rejectUrl, stageLabel }) {
+  const fmt = v => v == null || v === '' ? '—'
+    : Number(v).toLocaleString('en-IN', { style:'currency', currency:'INR', maximumFractionDigits:2 })
+
+  items = items || []
+  const hasCodes = items.some(it => it.asset_code)
+  const total = items.reduce((s, it) => s + Number(it.total_amount || 0), 0)
+
+  const th = txt => `<th style="padding:8px;border:1px solid #e5a000;text-align:left;color:#ffffff;font-size:12px">${txt}</th>`
+  const td = txt => `<td style="padding:8px;border:1px solid #ddd;font-size:12px">${esc(txt ?? '—')}</td>`
+
+  const itemsTable = `
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+      <thead>
+        <tr style="background:#f59e0b">
+          ${th('#')}${th('Material Description')}${th('Qty')}${th('Unit Price')}${th('Total')}
+          ${th('Company')}${th('Cost Center')}${th('Location')}${hasCodes ? th('Asset Code') : ''}
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map((it, i) => `
+          <tr>
+            ${td(i+1)}${td(it.material_description)}${td(it.quantity)}${td(fmt(it.unit_price))}${td(fmt(it.total_amount))}
+            ${td(it.company_code)}${td(it.cost_center)}${td(it.plant_name)}
+            ${hasCodes ? `<td style="padding:8px;border:1px solid #ddd;font-size:12px;font-family:monospace">${esc(it.asset_code || '—')}</td>` : ''}
+          </tr>`).join('')}
+      </tbody>
+      <tfoot>
+        <tr style="background:#f8f6f2">
+          <td colspan="${hasCodes ? 8 : 7}" style="padding:8px;border:1px solid #ddd;text-align:right;font-weight:bold;font-size:12px">Total Value</td>
+          <td style="padding:8px;border:1px solid #ddd;font-weight:bold;font-size:12px">${fmt(total)}</td>
+        </tr>
+      </tfoot>
+    </table>`
+
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/></head>
+<body style="font-family:Arial,sans-serif;background:#f8f6f2;padding:24px;color:#2e2e2e;margin:0">
+  <div style="max-width:760px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #eee">
+
+    <div style="background-color:#f59e0b;padding:28px 32px">
+      <h1 style="color:#ffffff;margin:0;font-size:22px;font-family:Arial,sans-serif">Asset Request Approval</h1>
+      <p style="color:#ffffff;margin:6px 0 0;font-size:14px;font-family:Arial,sans-serif">
+        Request ID: <strong>${esc(request.request_code)}</strong>${stageLabel ? ` &nbsp;·&nbsp; ${esc(stageLabel)}` : ''}
+      </p>
+    </div>
+
+    <div style="padding:28px 32px">
+      <p style="font-size:15px;margin:0 0 20px">
+        <strong>${esc(requestedBy)}</strong> has submitted an asset request that requires your approval.
+      </p>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+        <tr>
+          <td style="padding:10px;background:#fef3c7;font-size:12px;color:#92400e;font-weight:bold;width:30%">DEPARTMENT</td>
+          <td style="padding:10px;background:#fef3c7;font-size:14px;font-weight:600">${esc(deptName ?? '—')}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px;background:#f8f6f2;font-size:12px;color:#6b7280;font-weight:bold">ASSET OWNER</td>
+          <td style="padding:10px;background:#f8f6f2;font-size:14px;font-weight:600">${esc(request.asset_owner ?? '—')}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px;background:#fef3c7;font-size:12px;color:#92400e;font-weight:bold">TOTAL ITEMS</td>
+          <td style="padding:10px;background:#fef3c7;font-size:14px;font-weight:600">${items.length}</td>
+        </tr>
+      </table>
+
+      <h3 style="font-size:14px;margin:0 0 12px;color:#2e2e2e">Requested Items</h3>
+      ${itemsTable}
+
+      <table cellpadding="0" cellspacing="0" border="0" style="margin:32px auto;width:100%">
+        <tr>
+          <td align="center">
+            <p style="font-size:14px;color:#6b7280;margin-bottom:20px">
+              Please review and take action. This link expires in <strong>74 hours</strong>.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td align="center">
+            ${safeButton('✓ APPROVE REQUEST', approveUrl, '#16a34a')}
+            ${safeButton('✗ REJECT REQUEST', rejectUrl, '#dc2626')}
+          </td>
+        </tr>
+      </table>
+
+      <p style="font-size:12px;color:#9ca3af;text-align:center;margin-top:24px">
+        This email was sent by AssetHub Asset Management System.<br/>
+        If you did not expect this email, please ignore it.
+      </p>
+    </div>
   </div>
 </body>
 </html>`
@@ -302,4 +417,5 @@ module.exports = {
   buildReturnApprovalEmail,
   buildApprovalResultHtml,
   buildChallanTable,
+  buildAssetRequestApprovalEmail,
 }

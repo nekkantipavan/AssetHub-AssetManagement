@@ -2,12 +2,12 @@ import { useState, useEffect } from 'react'
 import { Plus, Edit2, Trash2, Mail, X, CheckCircle } from 'lucide-react'
 import Button from '../components/common/Button'
 import Modal from '../components/common/Modal'
-import { Input } from '../components/common/FormFields'
+import { Input, Select } from '../components/common/FormFields'
 import { Badge } from '../components/common/Badge'
 import { useAuth } from '../context/AuthContext'
 import { getEmailMasters, createEmailMaster, updateEmailMaster, deleteEmailMaster } from '../data/api'
 
-const EMPTY = { name:'', email:'', department:'' }
+const EMPTY = { name:'', email:'', department:'', role:'Manager' }
 
 export default function EmailMasters() {
   const { canEdit } = useAuth()
@@ -31,7 +31,7 @@ export default function EmailMasters() {
   }
 
   function openAdd()   { setForm(EMPTY); setErr(''); setModal('add') }
-  function openEdit(m) { setSelected(m); setForm({ name:m.name, email:m.email, department:m.department||'' }); setErr(''); setModal('edit') }
+  function openEdit(m) { setSelected(m); setForm({ name:m.name, email:m.email, department:m.department||'', role:m.role||'Manager' }); setErr(''); setModal('edit') }
   function openDel(m)  { setSelected(m); setErr(''); setModal('delete') }
   function close()     { setModal(null); setSelected(null) }
 
@@ -110,7 +110,7 @@ export default function EmailMasters() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-cream-200 dark:border-gray-700">
-                {['#','Name','Email','Department','Status','Actions'].map(h => (
+                {['#','Name','Email','Department','Type','Status','Actions'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -129,6 +129,14 @@ export default function EmailMasters() {
                   </td>
                   <td className="px-4 py-3 text-sm text-ink-500 dark:text-gray-400">{m.email}</td>
                   <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{m.department || '—'}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium
+                      ${m.role === 'Department Head'
+                        ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400'
+                        : 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400'}`}>
+                      {m.role || 'Manager'}
+                    </span>
+                  </td>
                   <td className="px-4 py-3"><Badge label={m.is_active ? 'Active' : 'Inactive'}/></td>
                   <td className="px-4 py-3">
                     {editable && (
@@ -162,6 +170,10 @@ export default function EmailMasters() {
           <Input label="Full Name *"   name="name"       value={form.name}       onChange={handleChange} placeholder="e.g. Arun Prasad"/>
           <Input label="Email *"       name="email"      value={form.email}      onChange={handleChange} type="email" placeholder="manager@company.com"/>
           <Input label="Department"    name="department" value={form.department} onChange={handleChange} placeholder="e.g. IT, Finance"/>
+          <Select label="Approver Type *" name="role" value={form.role} onChange={handleChange}>
+            <option value="Department Head">Department Head</option>
+            <option value="Manager">Manager</option>
+          </Select>
           <div className="flex justify-end gap-3 pt-1">
             <Button variant="secondary" onClick={close} disabled={saving}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving}>

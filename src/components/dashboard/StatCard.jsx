@@ -18,7 +18,7 @@ export default function StatCard({ icon: Icon, label, value, sub, highlight = fa
             ? 'bg-white dark:bg-gray-800/20'
             : 'bg-orange-soft dark:bg-gray-700'
         )}>
-          <Icon size={20} className={highlight ? 'text-white' : 'text-brand-600 dark:text-brand-400'} />
+          <Icon size={20} className={highlight ? 'text-brand-600' : 'text-brand-600 dark:text-brand-400'} />
         </div>
 
         {/* Trend */}

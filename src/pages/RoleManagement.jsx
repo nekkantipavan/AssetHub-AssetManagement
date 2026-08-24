@@ -5,10 +5,11 @@ import { useAuth } from '../context/AuthContext'
 
 const PAGE_GROUPS = [
   { section: 'Management', pages: [
-    { key: 'dashboard',   label: 'Dashboard'   },
-    { key: 'assets',      label: 'Assets'      },
-    { key: 'bulk-upload', label: 'Bulk Upload' },
-    { key: 'transfer',    label: 'Transfers'   },
+    { key: 'dashboard',      label: 'Dashboard'      },
+    { key: 'assets',         label: 'Assets'         },
+    { key: 'asset-requests', label: 'Asset Requests' },
+    { key: 'bulk-upload',    label: 'Bulk Upload'    },
+    { key: 'transfer',       label: 'Transfers'      },
   ]},
   { section: 'Masters', pages: [
     { key: 'plants',        label: 'Plants'        },
@@ -20,8 +21,9 @@ const PAGE_GROUPS = [
     { key: 'reports', label: 'Reports (Asset & Transfer)' },
   ]},
   { section: 'System', pages: [
-    { key: 'users',      label: 'Users'      },
-    { key: 'audit-logs', label: 'Audit Logs' },
+    { key: 'users',            label: 'Users'            },
+    { key: 'audit-logs',       label: 'Audit Logs'       },
+    { key: 'challan-settings', label: 'Challan Settings' },
   ]},
 ]
 

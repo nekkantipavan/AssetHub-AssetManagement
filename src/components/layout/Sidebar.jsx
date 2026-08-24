@@ -2,15 +2,16 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Box, Upload, ArrowLeftRight,
   Building2, Layers, Tag, Mail, Users, ScrollText,
-  LogOut, Plus, List, FileBox, FileText, ShieldCheck
+  LogOut, Plus, List, FileBox, FileText, ShieldCheck, ClipboardList, Receipt
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuth } from '../../context/AuthContext'
 
 const allNavItems = [
-  { label:'Dashboard',   icon:LayoutDashboard, path:'/dashboard',   page:'dashboard'   },
-  { label:'Assets',      icon:Box,             path:'/assets',       page:'assets'      },
-  { label:'Bulk Upload', icon:Upload,          path:'/bulk-upload',  page:'bulk-upload' },
+  { label:'Dashboard',      icon:LayoutDashboard, path:'/dashboard',      page:'dashboard'      },
+  { label:'Assets',         icon:Box,             path:'/assets',         page:'assets'         },
+  { label:'Asset Requests', icon:ClipboardList,   path:'/asset-requests', page:'asset-requests' },
+  { label:'Bulk Upload',    icon:Upload,          path:'/bulk-upload',    page:'bulk-upload'    },
 ]
 
 const allMasterItems = [
@@ -26,9 +27,10 @@ const allReportItems = [
 ]
 
 const allSystemItems = [
-  { label:'Users',           icon:Users,       path:'/users',           page:'users'           },
-  { label:'Audit Logs',      icon:ScrollText,  path:'/audit-logs',      page:'audit-logs'      },
-  { label:'Role Management', icon:ShieldCheck, path:'/role-management', page:'role-management' },
+  { label:'Users',            icon:Users,       path:'/users',            page:'users'            },
+  { label:'Audit Logs',       icon:ScrollText,  path:'/audit-logs',       page:'audit-logs'       },
+  { label:'Role Management',  icon:ShieldCheck, path:'/role-management',  page:'role-management'  },
+  { label:'Challan Settings', icon:Receipt,     path:'/challan-settings', page:'challan-settings' },
 ]
 
 const roleColors = {

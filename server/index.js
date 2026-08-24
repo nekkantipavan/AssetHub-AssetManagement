@@ -4,14 +4,60 @@ const pool    = require('./db')
 const bcrypt  = require('bcrypt')
 const jwt     = require('jsonwebtoken')
 require('dotenv').config()
-const { sendHtml, buildApprovalEmail, buildReturnApprovalEmail, buildApprovalResultHtml, buildChallanTable } = require('./emailService')
+const { sendHtml, buildApprovalEmail, buildReturnApprovalEmail, buildApprovalResultHtml, buildChallanTable, buildAssetRequestApprovalEmail } = require('./emailService')
 const crypto = require('crypto')
 const ASSET_FIELD_SPEC = require('./assetFieldSpec')
 
 const app        = express()
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-const JWT_SECRET = process.env.JWT_SECRET || 'assethub_secret_key'
+app.disable('x-powered-by')
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// ── Security headers (applied to every response) ─────────────
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('X-XSS-Protection', '1; mode=block')
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+  // HSTS only has effect over HTTPS; harmless over HTTP, ready for when TLS is enabled.
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'"
+  )
+  next()
+})
+
+// ── Response sanitizer: never leak secrets in any JSON response ──
+// Strips approval tokens, password hashes, etc. from every response body
+// (deep), so no current or future endpoint can expose them.
+const SENSITIVE_KEYS = new Set([
+  'approval_token', 'approval_token_expires', 'password_hash', 'password',
+])
+function stripSensitive(val) {
+  if (Array.isArray(val)) return val.map(stripSensitive)
+  if (val instanceof Date) return val
+  if (val && typeof val === 'object') {
+    const out = {}
+    for (const [k, v] of Object.entries(val)) {
+      if (SENSITIVE_KEYS.has(k)) continue
+      out[k] = stripSensitive(v)
+    }
+    return out
+  }
+  return val
+}
+app.use((req, res, next) => {
+  const origJson = res.json.bind(res)
+  res.json = body => origJson(stripSensitive(body))
+  next()
+})
+
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET is not set in the environment. Refusing to start with an insecure default.')
+  process.exit(1)
+}
+const JWT_SECRET = process.env.JWT_SECRET
 const PORT       = process.env.PORT || 3001
 
 // ── Startup migration: role_permissions table ────────────────
@@ -31,11 +77,11 @@ const PORT       = process.env.PORT || 3001
       ['Manager','dashboard','true'],['Manager','assets','true'],['Manager','bulk-upload','true'],
       ['Manager','transfer','true'],['Manager','plants','view'],['Manager','departments','view'],
       ['Manager','masters','view'],['Manager','email-masters','false'],['Manager','reports','true'],
-      ['Manager','users','view'],['Manager','audit-logs','false'],
+      ['Manager','users','view'],['Manager','audit-logs','false'],['Manager','asset-requests','true'],
       ['User','dashboard','true'],['User','assets','view'],['User','bulk-upload','false'],
       ['User','transfer','view'],['User','plants','false'],['User','departments','false'],
       ['User','masters','false'],['User','email-masters','false'],['User','reports','false'],
-      ['User','users','false'],['User','audit-logs','false'],
+      ['User','users','false'],['User','audit-logs','false'],['User','asset-requests','true'],
     ]
     for (const [role, page, access] of seed) {
       await pool.query(
@@ -48,7 +94,25 @@ const PORT       = process.env.PORT || 3001
     console.error('Migration error:', err.message)
   }
 })()
- 
+
+// ── Startup migration: upgrade any legacy plaintext passwords to bcrypt ─
+;(async () => {
+  try {
+    // Column used to invalidate JWTs issued before a logout / password change.
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS token_invalid_before TIMESTAMP')
+    const r = await pool.query(
+      `SELECT id, password_hash FROM users WHERE password_hash NOT LIKE '$2%'`
+    )
+    for (const u of r.rows) {
+      const hashed = await bcrypt.hash(u.password_hash, 10)
+      await pool.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hashed, u.id])
+    }
+    if (r.rows.length) console.log(`✓ Migrated ${r.rows.length} legacy plaintext password(s) to bcrypt`)
+  } catch (err) {
+    console.error('Password migration error:', err.message)
+  }
+})()
+
 
 app.use(cors({
   origin: [
@@ -60,12 +124,19 @@ app.use(cors({
 }));
  
 // ── Auth middleware ──────────────────────────────────────────
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
   const header = req.headers.authorization
   if (!header) return res.status(401).json({ error: 'No token provided' })
   const token = header.split(' ')[1]
   try {
-    req.user = jwt.verify(token, JWT_SECRET)
+    const decoded = jwt.verify(token, JWT_SECRET)
+    // Reject tokens issued before a logout / password change (server-side invalidation)
+    const u = await pool.query('SELECT token_invalid_before FROM users WHERE id=$1', [decoded.id])
+    if (!u.rows.length) return res.status(401).json({ error: 'Invalid or expired token' })
+    const inv = u.rows[0].token_invalid_before
+    if (inv && decoded.iat && decoded.iat * 1000 < new Date(inv).getTime())
+      return res.status(401).json({ error: 'Session expired, please log in again' })
+    req.user = decoded
     next()
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' })
@@ -79,6 +150,74 @@ function requireRole(...roles) {
     next()
   }
 }
+
+// Strip HTML tags from stored free-text so persisted values can't carry markup
+// (defense-in-depth against stored XSS; React + email escaping are the primary controls).
+function stripTags(s) {
+  return s == null ? s : String(s).replace(/<[^>]*>/g, '').trim()
+}
+
+// Password complexity policy: ≥8 chars with upper, lower, digit, and symbol.
+// Returns an error string if invalid, or null if the password passes.
+function passwordPolicyError(pw) {
+  if (!pw || pw.length < 8)      return 'Password must be at least 8 characters'
+  if (!/[a-z]/.test(pw))         return 'Password must include a lowercase letter'
+  if (!/[A-Z]/.test(pw))         return 'Password must include an uppercase letter'
+  if (!/[0-9]/.test(pw))         return 'Password must include a number'
+  if (!/[^A-Za-z0-9]/.test(pw))  return 'Password must include a symbol'
+  return null
+}
+
+// Email validation + optional domain allowlist (ALLOWED_EMAIL_DOMAINS, comma-separated).
+// Defaults to the organisation domain derived from SMTP_FROM_EMAIL/SMTP_USER.
+function allowedEmailDomains() {
+  const env = process.env.ALLOWED_EMAIL_DOMAINS
+  if (env) return env.split(',').map(d => d.trim().toLowerCase()).filter(Boolean)
+  const from = process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER || ''
+  const dom = from.split('@')[1]
+  return dom ? [dom.toLowerCase()] : []
+}
+function emailError(email) {
+  const e = String(email || '').trim().toLowerCase()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return 'Invalid email address'
+  const allowed = allowedEmailDomains()
+  if (allowed.length === 0) return null            // not configured → format check only
+  const dom = e.split('@')[1]
+  if (!allowed.includes(dom)) return `Email domain must be one of: ${allowed.join(', ')}`
+  return null
+}
+
+// ── Lightweight in-memory rate limiter (single pm2 process) ──
+// Returns Express middleware allowing `max` requests per `windowMs` per key.
+function rateLimit({ windowMs, max, keyFn }) {
+  const hits = new Map()   // key → [timestamps]
+  // Periodic cleanup so the map doesn't grow unbounded
+  setInterval(() => {
+    const cutoff = Date.now() - windowMs
+    for (const [k, arr] of hits) {
+      const kept = arr.filter(t => t > cutoff)
+      if (kept.length) hits.set(k, kept); else hits.delete(k)
+    }
+  }, windowMs).unref?.()
+
+  return (req, res, next) => {
+    const now = Date.now(), cutoff = now - windowMs
+    const key = (keyFn ? keyFn(req) : (req.ip || 'global'))
+    const arr = (hits.get(key) || []).filter(t => t > cutoff)
+    if (arr.length >= max) {
+      res.setHeader('Retry-After', Math.ceil(windowMs / 1000))
+      return res.status(429).json({ error: 'Too many requests — please try again later.' })
+    }
+    arr.push(now)
+    hits.set(key, arr)
+    next()
+  }
+}
+
+// Login: 8 attempts / 15 min per IP+username. Admin/email ops: 30 / 5 min per IP.
+const loginLimiter = rateLimit({ windowMs: 15*60*1000, max: 8,
+  keyFn: req => `${req.ip}|${String(req.body?.username || '').toLowerCase()}` })
+const sensitiveLimiter = rateLimit({ windowMs: 5*60*1000, max: 30 })
  
 // Ensure meta column and notifications table exist (idempotent)
 pool.query(`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS meta JSONB`).catch(() => {})
@@ -93,6 +232,151 @@ pool.query(`
     created_at  TIMESTAMP DEFAULT NOW()
   )
 `).catch(() => {})
+
+// Ensure two-stage transfer approval columns exist (idempotent), and
+// backfill in-flight transfers created before this feature shipped —
+// they only ever had one approver, so they skip straight to the final stage.
+// Sequential (awaited): the backfill UPDATE depends on the ADD COLUMNs above it.
+;(async () => {
+  try {
+    await pool.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS dept_head_email VARCHAR(255)`)
+    await pool.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS dept_head_approved_at TIMESTAMP`)
+    await pool.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS approval_stage VARCHAR(20) DEFAULT 'dept_head'`)
+    await pool.query(`ALTER TABLE email_masters ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'Manager'`)
+    await pool.query(`UPDATE transfers SET approval_stage='manager' WHERE approval_stage='dept_head' AND dept_head_email IS NULL`)
+  } catch (err) {
+    console.error('Two-stage approval migration error:', err.message)
+  }
+})()
+
+// Ensure plant-based challan numbering exists (idempotent, self-healing on every boot).
+// Each plant carries a short prefix (e.g. NSPL); challan_sequences holds an atomic
+// per-prefix/fiscal-year/doc-type counter so concurrent creates never collide;
+// challan_settings is a single-row table for the admin-configurable doc-type
+// labels, sequence padding, and printed boilerplate text.
+;(async () => {
+  try {
+    await pool.query(`ALTER TABLE plants ADD COLUMN IF NOT EXISTS challan_prefix VARCHAR(20)`)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS challan_sequences (
+        prefix      VARCHAR(20) NOT NULL,
+        fiscal_year VARCHAR(4)  NOT NULL,
+        doc_type    VARCHAR(20) NOT NULL,
+        last_seq    INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (prefix, fiscal_year, doc_type)
+      )
+    `)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS challan_settings (
+        id                SMALLINT PRIMARY KEY DEFAULT 1,
+        delivery_doc_type VARCHAR(20)  NOT NULL DEFAULT 'AST',
+        return_doc_type   VARCHAR(20)  NOT NULL DEFAULT 'RET',
+        seq_padding       SMALLINT     NOT NULL DEFAULT 3,
+        footer_note       TEXT         NOT NULL DEFAULT 'Material transferred internally for business use only. Not intended for sale.',
+        signatory_label   VARCHAR(100) NOT NULL DEFAULT 'AUTHORISED SIGNATORY',
+        CHECK (id = 1)
+      )
+    `)
+    // Template-designer columns: master on/off switch, embedded signature image,
+    // and a JSON blob for all visual customisations (labels, colours, logo, toggles).
+    await pool.query(`ALTER TABLE challan_settings ADD COLUMN IF NOT EXISTS template_enabled BOOLEAN NOT NULL DEFAULT false`)
+    await pool.query(`ALTER TABLE challan_settings ADD COLUMN IF NOT EXISTS signature_image TEXT`)
+    await pool.query(`ALTER TABLE challan_settings ADD COLUMN IF NOT EXISTS template JSONB NOT NULL DEFAULT '{}'::jsonb`)
+    await pool.query(`INSERT INTO challan_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`)
+    await pool.query(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS challan_no VARCHAR(50)`)
+    await pool.query(`ALTER TABLE transfer_returns ADD COLUMN IF NOT EXISTS challan_no VARCHAR(50)`)
+  } catch (err) {
+    console.error('Challan numbering migration error:', err.message)
+  }
+})()
+
+// Ensure two-stage return approval columns exist (idempotent).
+// Mirrors the transfer two-stage pattern: Dept Head approves first, then Manager.
+// Backfill: returns created before this feature only had manager_email,
+// so they skip straight to the final (manager) stage.
+;(async () => {
+  try {
+    await pool.query(`ALTER TABLE transfer_returns ADD COLUMN IF NOT EXISTS dept_head_email VARCHAR(255)`)
+    await pool.query(`ALTER TABLE transfer_returns ADD COLUMN IF NOT EXISTS dept_head_approved_at TIMESTAMP`)
+    await pool.query(`ALTER TABLE transfer_returns ADD COLUMN IF NOT EXISTS approval_stage VARCHAR(20) DEFAULT 'dept_head'`)
+    await pool.query(`UPDATE transfer_returns SET approval_stage='manager' WHERE approval_stage='dept_head' AND dept_head_email IS NULL`)
+  } catch (err) {
+    console.error('Two-stage return approval migration error:', err.message)
+  }
+})()
+
+// Self-healing migration: sanitize existing email_masters names & departments in DB
+;(async () => {
+  try {
+    await pool.query(`
+      UPDATE email_masters
+      SET name = REGEXP_REPLACE(name, '<[^>]*>', '', 'g'),
+          department = REGEXP_REPLACE(department, '<[^>]*>', '', 'g')
+      WHERE name LIKE '%<%' OR department LIKE '%<%'
+    `)
+  } catch (err) {
+    console.error('Email masters cleanup migration error:', err.message)
+  }
+})()
+
+
+// Ensure asset-request tables exist (idempotent, self-healing on every boot).
+// A request holds shared fields; each line item lives in asset_request_items
+// and gets exactly one asset_code.
+;(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS asset_requests (
+        id                     SERIAL PRIMARY KEY,
+        request_code           VARCHAR(40) UNIQUE NOT NULL,
+        requested_by           INTEGER REFERENCES users(id),
+        asset_owner            VARCHAR(255),
+        dept_id                INTEGER REFERENCES departments(id),
+        total_amount           NUMERIC,
+        status                 VARCHAR(30) NOT NULL DEFAULT 'Pending Dept Head',
+        dept_head_email        VARCHAR(255),
+        manager_email          VARCHAR(255),
+        approval_token         VARCHAR(255),
+        approval_token_expires TIMESTAMP,
+        dept_head_approved_at  TIMESTAMP,
+        manager_approved_at    TIMESTAMP,
+        rejected_reason        TEXT,
+        rejected_stage         VARCHAR(30),
+        created_at             TIMESTAMP DEFAULT NOW(),
+        updated_at             TIMESTAMP DEFAULT NOW()
+      )
+    `)
+    // Migrate away from the original single-item shape (per-item cols on the request).
+    for (const col of ['material_description','quantity','unit_price','company_code',
+                       'cost_center','project_name','plant_id','asset_life','remarks']) {
+      await pool.query(`ALTER TABLE asset_requests DROP COLUMN IF EXISTS ${col}`)
+    }
+    await pool.query(`ALTER TABLE asset_requests ADD COLUMN IF NOT EXISTS total_amount NUMERIC`)
+    await pool.query(`DROP TABLE IF EXISTS asset_request_codes`)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS asset_request_items (
+        id                   SERIAL PRIMARY KEY,
+        request_id           INTEGER REFERENCES asset_requests(id) ON DELETE CASCADE,
+        seq                  INTEGER NOT NULL,
+        material_description TEXT NOT NULL,
+        quantity             INTEGER NOT NULL,
+        unit_price           NUMERIC,
+        total_amount         NUMERIC,
+        company_code         VARCHAR(50),
+        cost_center          VARCHAR(50),
+        project_name         VARCHAR(255),
+        plant_id             INTEGER REFERENCES plants(id),
+        asset_life           INTEGER,
+        remarks              TEXT,
+        asset_code           VARCHAR(100),
+        created_at           TIMESTAMP DEFAULT NOW()
+      )
+    `)
+    console.log('✓ asset_requests tables ready')
+  } catch (err) {
+    console.error('Asset requests migration error:', err.message)
+  }
+})()
 
 async function createNotification(type, message, relatedCode, relatedId) {
   try {
@@ -117,7 +401,7 @@ async function writeAudit(userId, action, module, details, ip, meta = null) {
 // AUTH
 // ════════════════════════════════════════════════════════════
  
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body
     if (!username || !password)
@@ -133,12 +417,7 @@ app.post('/api/auth/login', async (req, res) => {
  
     const user = result.rows[0]
  
-    let valid = false
-    if (user.password_hash?.startsWith('$2b') || user.password_hash?.startsWith('$2a')) {
-      valid = await bcrypt.compare(password, user.password_hash)
-    } else {
-      valid = (password === user.password_hash)
-    }
+    const valid = await bcrypt.compare(password, user.password_hash)
  
     if (!valid)
       return res.status(401).json({ error: 'Invalid username or password' })
@@ -154,11 +433,11 @@ app.post('/api/auth/login', async (req, res) => {
  
     res.json({
       token,
-      user: { id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, employee_id: user.employee_id, must_change_password: user.must_change_password}
+      user: { id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, must_change_password: user.must_change_password}
     })
   } catch (err) {
     console.error('Login error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
  
@@ -170,7 +449,15 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
     )
     if (!r.rows.length) return res.status(404).json({ error: 'User not found' })
     res.json(r.rows[0])
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+})
+
+// ── Logout: invalidate all existing JWTs for this user ───────
+app.post('/api/auth/logout', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('UPDATE users SET token_invalid_before = NOW() WHERE id=$1', [req.user.id])
+    res.json({ message: 'Logged out' })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
@@ -180,8 +467,8 @@ app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
     if (!current_password || !new_password)
       return res.status(400).json({ error: 'Current and new password are required' })
 
-    if (new_password.length < 6)
-      return res.status(400).json({ error: 'New password must be at least 6 characters' })
+    const pwErr = passwordPolicyError(new_password)
+    if (pwErr) return res.status(400).json({ error: pwErr })
 
     // Fetch current hash
     const result = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.id])
@@ -191,20 +478,15 @@ app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
     const user = result.rows[0]
 
     // Verify current password
-    let valid = false
-    if (user.password_hash?.startsWith('$2b') || user.password_hash?.startsWith('$2a')) {
-      valid = await bcrypt.compare(current_password, user.password_hash)
-    } else {
-      valid = (current_password === user.password_hash)
-    }
+    const valid = await bcrypt.compare(current_password, user.password_hash)
 
     if (!valid)
       return res.status(401).json({ error: 'Current password is incorrect' })
 
-    // Hash new password and clear the force-change flag
+    // Hash new password, clear the force-change flag, and invalidate old sessions
     const hashed = await bcrypt.hash(new_password, 10)
     await pool.query(
-      'UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2',
+      'UPDATE users SET password_hash = $1, must_change_password = false, token_invalid_before = NOW() WHERE id = $2',
       [hashed, req.user.id]
     )
 
@@ -212,7 +494,7 @@ app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
     res.json({ message: 'Password changed successfully' })
   } catch (err) {
     console.error('Change password error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -222,14 +504,14 @@ app.put('/api/users/:id/reset-password', authMiddleware, requireRole('Admin'), a
     const { id } = req.params
     const { new_password } = req.body
 
-    if (!new_password || new_password.length < 6)
-      return res.status(400).json({ error: 'Password must be at least 6 characters' })
+    const pwErr = passwordPolicyError(new_password)
+    if (pwErr) return res.status(400).json({ error: pwErr })
 
     const hashed = await bcrypt.hash(new_password, 10)
 
-    // Set new password AND force change on next login
+    // Set new password, force change on next login, and invalidate old sessions
     const result = await pool.query(
-      `UPDATE users SET password_hash = $1, must_change_password = true
+      `UPDATE users SET password_hash = $1, must_change_password = true, token_invalid_before = NOW()
        WHERE id = $2
        RETURNING id, name, username`,
       [hashed, id]
@@ -246,7 +528,7 @@ app.put('/api/users/:id/reset-password', authMiddleware, requireRole('Admin'), a
     res.json({ message: `Password reset. ${result.rows[0].name} will be prompted to change it on next login.` })
   } catch (err) {
     console.error('Reset password error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -396,7 +678,7 @@ app.get('/api/assets', authMiddleware, async (req, res) => {
       ORDER BY a.created_at DESC
     `)
     res.json(r.rows)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 app.get('/api/assets/:id', authMiddleware, async (req, res) => {
@@ -449,7 +731,7 @@ app.get('/api/assets/:id', authMiddleware, async (req, res) => {
     ])
 
     res.json({ asset, transfers: transfersRes.rows, logs: logsRes.rows })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 app.post('/api/assets', authMiddleware, requireRole('Admin','Manager'), async (req, res) => {
@@ -571,7 +853,7 @@ app.post('/api/assets', authMiddleware, requireRole('Admin','Manager'), async (r
     )
     await writeAudit(req.user.id, 'Asset Created', 'Assets', `${code} – ${aname}`, req.ip)
     res.status(201).json(r.rows[0])
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
  
 app.put('/api/assets/:id', authMiddleware, requireRole('Admin','Manager'), async (req, res) => {
@@ -720,7 +1002,7 @@ app.put('/api/assets/:id', authMiddleware, requireRole('Admin','Manager'), async
 
     await writeAudit(req.user.id, 'Asset Modified', 'Assets', `Asset ${code} updated`, req.ip, meta)
     res.json(r.rows[0])
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 app.delete('/api/assets/:id', authMiddleware, requireRole('Admin'), async (req, res) => {
@@ -730,7 +1012,7 @@ app.delete('/api/assets/:id', authMiddleware, requireRole('Admin'), async (req, 
     if (!r.rows.length) return res.status(404).json({ error: 'Asset not found' })
     await writeAudit(req.user.id, 'Asset Deleted', 'Assets', `Asset ${r.rows[0].asset_code} deleted`, req.ip)
     res.status(204).send()
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
  
 // ════════════════════════════════════════════════════════════
@@ -740,40 +1022,40 @@ app.delete('/api/assets/:id', authMiddleware, requireRole('Admin'), async (req, 
 app.get('/api/plants', authMiddleware, async (req, res) => {
   try {
     const r = await pool.query(`
-      SELECT p.id, p.code, p.name, p.location, p.head, p.status, p.created_at,
+      SELECT p.id, p.code, p.name, p.location, p.head, p.status, p.challan_prefix, p.created_at,
              COUNT(a.id)::int AS asset_count
       FROM plants p LEFT JOIN assets a ON a.plant_id = p.id
       GROUP BY p.id ORDER BY p.name ASC
     `)
     res.json(r.rows)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
  
 app.post('/api/plants', authMiddleware, requireRole('Admin'), async (req, res) => {
   try {
-    const { code, name, location, head, status } = req.body
+    const { code, name, location, head, status, challan_prefix } = req.body
     if (!code?.trim() || !name?.trim()) return res.status(400).json({ error: 'Code and name required' })
     const r = await pool.query(
-      `INSERT INTO plants (code,name,location,head,status,created_at) VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING *`,
-      [code.trim(), name.trim(), location||null, head||null, status||'Active']
+      `INSERT INTO plants (code,name,location,head,status,challan_prefix,created_at) VALUES ($1,$2,$3,$4,$5,$6,NOW()) RETURNING *`,
+      [code.trim(), name.trim(), location||null, head||null, status||'Active', challan_prefix?.trim().toUpperCase()||null]
     )
     await writeAudit(req.user.id, 'Plant Added', 'Masters', `Plant ${name} added`, req.ip)
     res.status(201).json({ ...r.rows[0], asset_count: 0 })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
- 
+
 app.put('/api/plants/:id', authMiddleware, requireRole('Admin'), async (req, res) => {
   try {
     const { id } = req.params
-    const { code, name, location, head, status } = req.body
+    const { code, name, location, head, status, challan_prefix } = req.body
     if (!code?.trim() || !name?.trim()) return res.status(400).json({ error: 'Code and name required' })
     const r = await pool.query(
-      `UPDATE plants SET code=$1,name=$2,location=$3,head=$4,status=$5 WHERE id=$6 RETURNING *`,
-      [code.trim(), name.trim(), location||null, head||null, status||'Active', id]
+      `UPDATE plants SET code=$1,name=$2,location=$3,head=$4,status=$5,challan_prefix=$6 WHERE id=$7 RETURNING *`,
+      [code.trim(), name.trim(), location||null, head||null, status||'Active', challan_prefix?.trim().toUpperCase()||null, id]
     )
     if (!r.rows.length) return res.status(404).json({ error: 'Plant not found' })
     res.json(r.rows[0])
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
  
 app.delete('/api/plants/:id', authMiddleware, requireRole('Admin'), async (req, res) => {
@@ -784,7 +1066,7 @@ app.delete('/api/plants/:id', authMiddleware, requireRole('Admin'), async (req, 
       return res.status(400).json({ error: 'Cannot delete plant with assigned assets' })
     await pool.query('DELETE FROM plants WHERE id=$1', [id])
     res.status(204).send()
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
  
 // ════════════════════════════════════════════════════════════
@@ -802,20 +1084,38 @@ app.get('/api/departments', authMiddleware, async (req, res) => {
       GROUP BY d.id, p.name ORDER BY d.name ASC
     `)
     res.json(r.rows)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
  
 app.post('/api/departments', authMiddleware, requireRole('Admin'), async (req, res) => {
   try {
     const { code, name, plant_id, manager, status } = req.body
     if (!code?.trim() || !name?.trim()) return res.status(400).json({ error: 'Code and name required' })
+
+    const parsedPlantId = plant_id ? parseInt(plant_id, 10) : null
+    const dupCheck = await pool.query(
+      `SELECT id FROM departments 
+       WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) 
+         AND LOWER(TRIM(code)) = LOWER(TRIM($2)) 
+         AND (plant_id = $3 OR (plant_id IS NULL AND $3::int IS NULL))`,
+      [name.trim(), code.trim(), parsedPlantId]
+    )
+    if (dupCheck.rows.length > 0) {
+      return res.status(400).json({ error: 'A department with the exact same Name, Code, and Plant already exists' })
+    }
+
     const r = await pool.query(
       `INSERT INTO departments (code,name,plant_id,manager,status,created_at) VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING *`,
-      [code.trim(), name.trim(), plant_id||null, manager||null, status||'Active']
+      [code.trim(), name.trim(), parsedPlantId, manager||null, status||'Active']
     )
     await writeAudit(req.user.id, 'Department Added', 'Masters', `Dept ${name} added`, req.ip)
     res.status(201).json({ ...r.rows[0], asset_count: 0 })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) {
+    const friendly = mapPgError(err)
+    if (friendly) return res.status(400).json({ error: friendly })
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
 })
  
 app.put('/api/departments/:id', authMiddleware, requireRole('Admin'), async (req, res) => {
@@ -823,13 +1123,32 @@ app.put('/api/departments/:id', authMiddleware, requireRole('Admin'), async (req
     const { id } = req.params
     const { code, name, plant_id, manager, status } = req.body
     if (!code?.trim() || !name?.trim()) return res.status(400).json({ error: 'Code and name required' })
+
+    const parsedPlantId = plant_id ? parseInt(plant_id, 10) : null
+    const dupCheck = await pool.query(
+      `SELECT id FROM departments 
+       WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) 
+         AND LOWER(TRIM(code)) = LOWER(TRIM($2)) 
+         AND (plant_id = $3 OR (plant_id IS NULL AND $3::int IS NULL))
+         AND id <> $4`,
+      [name.trim(), code.trim(), parsedPlantId, id]
+    )
+    if (dupCheck.rows.length > 0) {
+      return res.status(400).json({ error: 'A department with the exact same Name, Code, and Plant already exists' })
+    }
+
     const r = await pool.query(
       `UPDATE departments SET code=$1,name=$2,plant_id=$3,manager=$4,status=$5 WHERE id=$6 RETURNING *`,
-      [code.trim(), name.trim(), plant_id||null, manager||null, status||'Active', id]
+      [code.trim(), name.trim(), parsedPlantId, manager||null, status||'Active', id]
     )
     if (!r.rows.length) return res.status(404).json({ error: 'Department not found' })
     res.json(r.rows[0])
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) {
+    const friendly = mapPgError(err)
+    if (friendly) return res.status(400).json({ error: friendly })
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
 })
  
 app.delete('/api/departments/:id', authMiddleware, requireRole('Admin'), async (req, res) => {
@@ -840,15 +1159,16 @@ app.delete('/api/departments/:id', authMiddleware, requireRole('Admin'), async (
       return res.status(400).json({ error: 'Cannot delete department with assigned assets' })
     await pool.query('DELETE FROM departments WHERE id=$1', [id])
     res.status(204).send()
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
- function mapPgError(err) {
+function mapPgError(err) {
   if (err.code === '23505') {
-    const constraint = err.constraint || ''
+    const constraint = err.constraint || err.detail || ''
     if (constraint.includes('employee_id')) return 'Employee ID already exists'
     if (constraint.includes('username'))    return 'Username already exists'
     if (constraint.includes('email'))       return 'Email already exists'
+    if (constraint.includes('departments')) return 'A department with the exact same Name, Code, and Plant already exists'
     return 'A record with this value already exists'
   }
   if (err.code === '23502') return 'A required field is missing'
@@ -865,7 +1185,7 @@ app.get('/api/users', authMiddleware, requireRole('Admin','Manager'), async (req
       'SELECT id, employee_id, username, name, email, role, status, created_at FROM users ORDER BY created_at DESC'
     )
     res.json(r.rows)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
  
 app.get('/api/users/:id', authMiddleware, async (req, res) => {
@@ -876,12 +1196,12 @@ app.get('/api/users/:id', authMiddleware, async (req, res) => {
     )
     if (!r.rows.length) return res.status(404).json({ error: 'User not found' })
     res.json(r.rows[0])
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
  
 app.post('/api/users', authMiddleware, requireRole('Admin'), async (req, res) => {
   try {
-    const { employee_id, username, name, email, password_hash, password, role, status } = req.body
+    const { employee_id, username, name, email, password, role, status } = req.body
 
     // ── Field validation (clean messages, no DB involved yet) ──
     if (!employee_id?.trim()) return res.status(400).json({ error: 'Employee ID is required' })
@@ -889,8 +1209,10 @@ app.post('/api/users', authMiddleware, requireRole('Admin'), async (req, res) =>
     if (!name?.trim())        return res.status(400).json({ error: 'Full name is required' })
     if (!email?.trim())       return res.status(400).json({ error: 'Email is required' })
 
-    const raw    = password_hash || password || 'changeme123'
-    const hashed = raw.startsWith('$2b') ? raw : await bcrypt.hash(raw, 10)
+    // Always hash a server-validated plaintext password (never accept a client-supplied hash).
+    const pwErr = passwordPolicyError(password)
+    if (pwErr) return res.status(400).json({ error: `Temporary password: ${pwErr.charAt(0).toLowerCase() + pwErr.slice(1)}` })
+    const hashed = await bcrypt.hash(password, 10)
 
     const r = await pool.query(
       `INSERT INTO users (employee_id, username, name, email, password_hash, role, status, must_change_password, created_at)
@@ -1005,6 +1327,51 @@ function genReturnCode() {
   return `RET-${y}${m}${d}-${rand}`
 }
 
+// ── Plant-based challan numbering ──────────────────────────
+// Indian fiscal year (Apr–Mar), short form e.g. "2627" for FY2026-27.
+function fiscalYearShort(date = new Date()) {
+  const y = date.getFullYear()
+  const startYear = date.getMonth() >= 3 ? y : y - 1
+  return `${String(startYear).slice(-2)}${String(startYear + 1).slice(-2)}`
+}
+
+async function getChallanSettings() {
+  const r = await pool.query('SELECT * FROM challan_settings WHERE id=1')
+  return r.rows[0] || {
+    delivery_doc_type: 'AST', return_doc_type: 'RET', seq_padding: 3,
+    footer_note: 'Material transferred internally for business use only. Not intended for sale.',
+    signatory_label: 'AUTHORISED SIGNATORY',
+    template_enabled: false, signature_image: null, template: {},
+  }
+}
+
+// Atomically reserves the next sequence number for (prefix, fiscal year, doc type)
+// and formats the full challan number. docTypeKey is a stable internal key
+// ('delivery'/'return') so renaming the printed label never resets the counter.
+async function nextChallanNo(prefix, docTypeKey, docTypeLabel, padding) {
+  const safePrefix = (prefix || 'GEN').trim().toUpperCase()
+  const fy = fiscalYearShort()
+  const seqRes = await pool.query(
+    `INSERT INTO challan_sequences (prefix, fiscal_year, doc_type, last_seq)
+     VALUES ($1,$2,$3,1)
+     ON CONFLICT (prefix, fiscal_year, doc_type)
+     DO UPDATE SET last_seq = challan_sequences.last_seq + 1
+     RETURNING last_seq`,
+    [safePrefix, fy, docTypeKey]
+  )
+  const seq = String(seqRes.rows[0].last_seq).padStart(padding, '0')
+  return `${safePrefix}-${docTypeLabel}-${fy}-${seq}`
+}
+
+function genRequestCode() {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth()+1).padStart(2,'0')
+  const d = String(now.getDate()).padStart(2,'0')
+  const rand = Math.floor(Math.random()*9000)+1000
+  return `REQ-${y}${m}${d}-${rand}`
+}
+
 // ════════════════════════════════════════════════════════════
 // EMAIL MASTERS
 // ════════════════════════════════════════════════════════════
@@ -1015,39 +1382,44 @@ app.get('/api/email-masters', authMiddleware, async (req, res) => {
       'SELECT * FROM email_masters WHERE is_active=true ORDER BY name ASC'
     )
     res.json(r.rows)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 app.post('/api/email-masters', authMiddleware, requireRole('Admin'), async (req, res) => {
   try {
-    const { name, email, department } = req.body
+    const { name, email, department, role } = req.body
     if (!name?.trim() || !email?.trim())
       return res.status(400).json({ error: 'Name and email are required' })
+    const emErr = emailError(email)
+    if (emErr) return res.status(400).json({ error: emErr })
     const r = await pool.query(
-      `INSERT INTO email_masters (name, email, department, is_active, created_at)
-       VALUES ($1,$2,$3,true,NOW()) RETURNING *`,
-      [name.trim(), email.trim(), department?.trim()||null]
+      `INSERT INTO email_masters (name, email, department, role, is_active, created_at)
+       VALUES ($1,$2,$3,$4,true,NOW()) RETURNING *`,
+      [stripTags(name.trim()), email.trim(), stripTags(department?.trim())||null, role || 'Manager']
     )
     res.status(201).json(r.rows[0])
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Email already exists' })
-    res.status(500).json({ error: err.message })
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
 app.put('/api/email-masters/:id', authMiddleware, requireRole('Admin'), async (req, res) => {
   try {
     const { id } = req.params
-    const { name, email, department, is_active } = req.body
+    const { name, email, department, role, is_active } = req.body
     if (!name?.trim() || !email?.trim())
       return res.status(400).json({ error: 'Name and email are required' })
+    const emErr = emailError(email)
+    if (emErr) return res.status(400).json({ error: emErr })
     const r = await pool.query(
-      `UPDATE email_masters SET name=$1, email=$2, department=$3, is_active=$4 WHERE id=$5 RETURNING *`,
-      [name.trim(), email.trim(), department?.trim()||null, is_active??true, id]
+      `UPDATE email_masters SET name=$1, email=$2, department=$3, role=$4, is_active=$5 WHERE id=$6 RETURNING *`,
+      [stripTags(name.trim()), email.trim(), stripTags(department?.trim())||null, role || 'Manager', is_active??true, id]
     )
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' })
     res.json(r.rows[0])
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 app.delete('/api/email-masters/:id', authMiddleware, requireRole('Admin'), async (req, res) => {
@@ -1055,20 +1427,109 @@ app.delete('/api/email-masters/:id', authMiddleware, requireRole('Admin'), async
     const { id } = req.params
     await pool.query('UPDATE email_masters SET is_active=false WHERE id=$1', [id])
     res.status(204).send()
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ════════════════════════════════════════════════════════════
 // TRANSFERS
 // ════════════════════════════════════════════════════════════
 
+// Resolve email to actual name from email_masters or users table
+async function resolveApproverName(email) {
+  if (!email) return null
+  const cleanEmail = String(email).trim().toLowerCase()
+  try {
+    const res = await pool.query(
+      `SELECT name FROM email_masters WHERE LOWER(email) = $1 AND is_active = true
+       UNION ALL
+       SELECT name FROM users WHERE LOWER(email) = $1
+       LIMIT 1`,
+      [cleanEmail]
+    )
+    if (res.rows.length && res.rows[0].name) {
+      return stripTags(res.rows[0].name)
+    }
+  } catch (err) {
+    console.error('resolveApproverName error:', err)
+  }
+  const prefix = cleanEmail.split('@')[0]
+  return prefix
+    .split(/[._-]/)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
+async function getTransferApprovedByName(t) {
+  const { status, approval_stage, dept_head_email, manager_email, dept_head_approved_at, approved_by_name } = t
+
+  const deptHeadName = dept_head_email ? await resolveApproverName(dept_head_email) : null
+  const managerName  = manager_email   ? await resolveApproverName(manager_email)   : null
+
+  // 1. Pending Approval
+  if (status === 'Pending Approval') {
+    // If Dept Head has approved but waiting for Manager approval
+    if (dept_head_approved_at || approval_stage === 'manager') {
+      return deptHeadName || 'Dept Head Approved'
+    }
+    // If Dept Head itself has not approved yet
+    return 'Waiting for Approvals'
+  }
+
+  // 2. Rejected
+  if (status === 'Rejected') {
+    return 'Rejected'
+  }
+
+  // 3. Approved / In Transit / Completed / Returned
+  if (approved_by_name && approved_by_name !== 'Email Approval') {
+    return approved_by_name
+  }
+
+  if (deptHeadName && managerName && deptHeadName.toLowerCase() !== managerName.toLowerCase()) {
+    return `${deptHeadName} & ${managerName}`
+  }
+  if (managerName) return managerName
+  if (deptHeadName) return deptHeadName
+  return approved_by_name || 'Email Approval'
+}
+
+async function getReturnApprovedByName(r) {
+  const { approval_status, approval_stage, dept_head_email, manager_email, dept_head_approved_at, approved_by_name } = r
+
+  const deptHeadName = dept_head_email ? await resolveApproverName(dept_head_email) : null
+  const managerName  = manager_email   ? await resolveApproverName(manager_email)   : null
+
+  if (approval_status === 'Pending Approval') {
+    if (dept_head_approved_at || approval_stage === 'manager') {
+      return deptHeadName || 'Dept Head Approved'
+    }
+    return 'Waiting for Approvals'
+  }
+
+  if (approval_status === 'Rejected') {
+    return 'Rejected'
+  }
+
+  if (approved_by_name && approved_by_name !== 'Email Approval') {
+    return approved_by_name
+  }
+
+  if (deptHeadName && managerName && deptHeadName.toLowerCase() !== managerName.toLowerCase()) {
+    return `${deptHeadName} & ${managerName}`
+  }
+  if (managerName) return managerName
+  if (deptHeadName) return deptHeadName
+  return approved_by_name || 'Email Approval'
+}
+
 // ── GET /api/transfers — list with stats ─────────────────────
 app.get('/api/transfers', authMiddleware, async (req, res) => {
   try {
     const transfers = await pool.query(`
       SELECT
-        t.id, t.transfer_code, t.transfer_type, t.status,
-        t.notes, t.manager_email, t.expected_return_date,
+        t.id, t.transfer_code, t.challan_no, t.transfer_type, t.status,
+        t.notes, t.dept_head_email, t.manager_email, t.expected_return_date,
+        t.approval_stage, t.dept_head_approved_at,
         t.approved_at, t.approved_by_name, t.rejected_reason,
         t.initiated_by, t.created_at,
         fp.name AS from_plant_name, fp.code AS from_plant_code, fp.location AS from_plant_location,
@@ -1095,8 +1556,13 @@ app.get('/api/transfers', authMiddleware, async (req, res) => {
       FROM transfers
     `)
 
-    res.json({ transfers: transfers.rows, stats: stats.rows[0] })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+    const enrichedTransfers = await Promise.all(transfers.rows.map(async t => ({
+      ...t,
+      approved_by_name: await getTransferApprovedByName(t)
+    })))
+
+    res.json({ transfers: enrichedTransfers, stats: stats.rows[0] })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ── GET /api/transfers/:id — full detail ─────────────────────
@@ -1122,8 +1588,8 @@ app.get('/api/transfers/:id', authMiddleware, async (req, res) => {
     const items = await pool.query(`
       SELECT
         ti.id, ti.asset_id, ti.notes,
-        a.asset_code AS asset_tag, a.name, a.category, a.asset_class,
-        a.serial_number AS serial, a.acquisition_value AS value,
+        a.asset_code, a.asset_code AS asset_tag, a.name, a.category, a.asset_class,
+        a.serial_number AS serial, a.acquisition_value, a.acquisition_value AS value,
         a.assigned_employee, a.status AS asset_status,
         d.name AS dept_name, p.name AS current_plant_name
       FROM transfer_items ti
@@ -1134,55 +1600,77 @@ app.get('/api/transfers/:id', authMiddleware, async (req, res) => {
       ORDER BY a.asset_code`, [id])
 
     // Get return history
-   const returns = await pool.query(`
-  SELECT
-    r.id, r.return_code, r.return_date, r.returned_by,
-    r.notes, r.status, r.created_at,
-    r.approval_status, r.manager_email,
-    r.approved_at, r.approved_by_name, r.rejected_reason,
-    COUNT(ri.id)::int AS returned_asset_count
-  FROM transfer_returns r
-  LEFT JOIN return_items ri ON ri.return_id = r.id
-  WHERE r.transfer_id = $1
-  GROUP BY r.id
-  ORDER BY r.created_at DESC`, [id])
+    const returns = await pool.query(`
+      SELECT
+        r.id, r.return_code, r.challan_no, r.return_date, r.returned_by,
+        r.notes, r.status, r.created_at,
+        r.approval_status, r.dept_head_email, r.manager_email, r.approval_stage, r.dept_head_approved_at,
+        r.approved_at, r.approved_by_name, r.rejected_reason,
+        COUNT(ri.id)::int AS returned_asset_count
+      FROM transfer_returns r
+      LEFT JOIN return_items ri ON ri.return_id = r.id
+      WHERE r.transfer_id = $1
+      GROUP BY r.id
+      ORDER BY r.created_at DESC`, [id])
 
     // Get detail of which assets returned in each return
     const returnItemsRaw = await pool.query(`
       SELECT
         ri.return_id, ri.asset_id,
-        a.asset_code AS asset_tag, a.name
+        a.asset_code, a.asset_code AS asset_tag, a.name
       FROM return_items ri
       JOIN assets a ON ri.asset_id = a.id
       WHERE ri.return_id = ANY(
         SELECT id FROM transfer_returns WHERE transfer_id = $1
       )`, [id])
 
-    // Attach return items to returns
-    const returnsWithItems = returns.rows.map(r => ({
+    // Attach return items to returns and enrich return approver names
+    const returnsWithItems = await Promise.all(returns.rows.map(async r => ({
       ...r,
+      approved_by_name: await getReturnApprovedByName(r),
       items: returnItemsRaw.rows.filter(ri => ri.return_id === r.id)
-    }))
+    })))
+
+    const transfer = tr.rows[0]
+    transfer.dept_head_name = transfer.dept_head_email ? await resolveApproverName(transfer.dept_head_email) : null
+    transfer.manager_name   = transfer.manager_email   ? await resolveApproverName(transfer.manager_email)   : null
+    transfer.approved_by_name = await getTransferApprovedByName(transfer)
 
     res.json({
-      ...tr.rows[0],
+      ...transfer,
       items:   items.rows,
       returns: returnsWithItems,
     })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ── POST /api/transfers — create transfer + send approval email
-app.post('/api/transfers', authMiddleware, requireRole('Admin','Manager'), async (req, res) => {
+app.post('/api/transfers', authMiddleware, sensitiveLimiter, requireRole('Admin','Manager'), async (req, res) => {
   try {
-    const { from_plant_id, to_plant_id, transfer_type, asset_ids, manager_email, notes, expected_return_date } = req.body
+    const { from_plant_id, to_plant_id, transfer_type, asset_ids, dept_head_email, manager_email, notes, expected_return_date } = req.body
 
     if (!from_plant_id || !to_plant_id)
       return res.status(400).json({ error: 'Source and destination plants are required' })
     if (!asset_ids?.length)
       return res.status(400).json({ error: 'Select at least one asset' })
+    if (!dept_head_email)
+      return res.status(400).json({ error: 'Department Head email is required for approval' })
     if (!manager_email)
       return res.status(400).json({ error: 'Manager email is required for approval' })
+    // Prevent self-approval: the initiator cannot be their own approver
+    const initiatorEmail = (req.user.email || '').toLowerCase()
+    if (initiatorEmail && [dept_head_email, manager_email].map(e => String(e).toLowerCase()).includes(initiatorEmail))
+      return res.status(400).json({ error: 'You cannot select yourself as an approver' })
+    for (const e of [dept_head_email, manager_email]) {
+      const emErr = emailError(e)
+      if (emErr) return res.status(400).json({ error: `Approver email: ${emErr}` })
+    }
+    if (expected_return_date) {
+      const today = new Date(); today.setHours(0, 0, 0, 0)
+      const ret = new Date(expected_return_date)
+      if (isNaN(ret.getTime())) return res.status(400).json({ error: 'Invalid expected return date' })
+      if (ret < today)          return res.status(400).json({ error: 'Expected return date cannot be in the past' })
+    }
     if (from_plant_id === to_plant_id)
       return res.status(400).json({ error: 'Source and destination cannot be the same plant' })
 
@@ -1205,17 +1693,27 @@ app.post('/api/transfers', authMiddleware, requireRole('Admin','Manager'), async
     const token        = require('crypto').randomBytes(32).toString('hex')
     const tokenExpiry  = new Date(Date.now() + (parseInt(process.env.APPROVAL_TOKEN_EXPIRY_HOURS||74)) * 3600000)
 
-    // Create transfer
+    // Delivery challan number is plant-based, assigned once at creation
+    const [fromPlantForChallan, challanSettings] = await Promise.all([
+      pool.query('SELECT challan_prefix, code FROM plants WHERE id=$1', [from_plant_id]),
+      getChallanSettings(),
+    ])
+    const challanNo = await nextChallanNo(
+      fromPlantForChallan.rows[0]?.challan_prefix || fromPlantForChallan.rows[0]?.code,
+      'delivery', challanSettings.delivery_doc_type, challanSettings.seq_padding
+    )
+
+    // Create transfer (starts at the Department Head approval stage)
     const tr = await pool.query(
       `INSERT INTO transfers
-       (transfer_code, from_plant_id, to_plant_id, transfer_type, status,
-        notes, manager_email, approval_token, approval_token_expires,
+       (transfer_code, challan_no, from_plant_id, to_plant_id, transfer_type, status,
+        notes, dept_head_email, manager_email, approval_stage, approval_token, approval_token_expires,
         expected_return_date, initiated_by, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,'Pending Approval',$5,$6,$7,$8,$9,$10,NOW(),NOW())
+       VALUES ($1,$2,$3,$4,$5,'Pending Approval',$6,$7,$8,'dept_head',$9,$10,$11,$12,NOW(),NOW())
        RETURNING *`,
-      [transferCode, from_plant_id, to_plant_id,
+      [transferCode, challanNo, from_plant_id, to_plant_id,
        transfer_type||'Returnable',
-       notes||null, manager_email, token, tokenExpiry,
+       stripTags(notes)||null, dept_head_email, manager_email, token, tokenExpiry,
        expected_return_date||null, req.user.id]
     )
     const transfer = tr.rows[0]
@@ -1265,10 +1763,10 @@ app.post('/api/transfers', authMiddleware, requireRole('Admin','Manager'), async
     let emailWarning = null
     let emailSent = false
     try {
-      const result = await sendHtml(manager_email, `Approval Required: Asset Transfer ${transferCode}`, emailHtml)
+      const result = await sendHtml(dept_head_email, `Approval Required: Asset Transfer ${transferCode}`, emailHtml)
       if (!result.skipped) {
         emailSent = true
-        console.log(`✓ Approval email successfully sent to ${manager_email}`)
+        console.log(`✓ Approval email successfully sent to ${dept_head_email}`)
       } else {
         emailWarning = result.warning || 'Email service not configured'
         console.warn(`⚠️  Email skipped: ${emailWarning}`)
@@ -1278,12 +1776,12 @@ app.post('/api/transfers', authMiddleware, requireRole('Admin','Manager'), async
       emailWarning = `Email delivery failed: ${emailErr.message}`
       // Still create the transfer, but log the warning
       await writeAudit(req.user.id, 'Transfer Created (Email Failed)', 'Transfer',
-        `${transferCode}: Email to ${manager_email} failed - ${emailErr.message}`, req.ip)
+        `${transferCode}: Email to ${dept_head_email} failed - ${emailErr.message}`, req.ip)
     }
 
     if (emailSent) {
       await writeAudit(req.user.id, 'Transfer Created & Emailed', 'Transfer',
-        `${transferCode}: ${asset_ids.length} assets, approval email sent to ${manager_email}`, req.ip)
+        `${transferCode}: ${asset_ids.length} assets, approval email sent to ${dept_head_email}`, req.ip)
     } else if (!emailWarning) {
       await writeAudit(req.user.id, 'Transfer Created', 'Transfer',
         `${transferCode}: ${asset_ids.length} assets from plant ${from_plant_id} to ${to_plant_id}`, req.ip)
@@ -1297,7 +1795,7 @@ app.post('/api/transfers', authMiddleware, requireRole('Admin','Manager'), async
     })
   } catch (err) {
     console.error('Transfer create error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -1322,7 +1820,63 @@ app.get('/api/transfers/:id/approve', async (req, res) => {
     if (transfer.status !== 'Pending Approval')
       return res.send(buildApprovalResultHtml(true, transfer.transfer_code, `Already processed (${transfer.status}).`))
 
-    // Approve: update transfer status + move asset plant_id to destination
+    // ── Stage 1: Department Head approves → forward to Manager for final approval ──
+    if (transfer.approval_stage === 'dept_head') {
+      const newToken   = crypto.randomBytes(32).toString('hex')
+      const newExpiry  = new Date(Date.now() + (parseInt(process.env.APPROVAL_TOKEN_EXPIRY_HOURS||74)) * 3600000)
+
+      await pool.query(
+        `UPDATE transfers
+         SET dept_head_approved_at=NOW(), approval_stage='manager',
+             approval_token=$1, approval_token_expires=$2, updated_at=NOW()
+         WHERE id=$3`, [newToken, newExpiry, id])
+
+      const [fromPlantR, toPlantR, assetsR, initiatedByR] = await Promise.all([
+        pool.query('SELECT name, location FROM plants WHERE id=$1', [transfer.from_plant_id]),
+        pool.query('SELECT name, location FROM plants WHERE id=$1', [transfer.to_plant_id]),
+        pool.query(`
+          SELECT a.asset_code AS asset_tag, a.name, a.category,
+                 a.acquisition_value AS value, d.name AS dept_name
+          FROM transfer_items ti
+          JOIN assets a ON ti.asset_id = a.id
+          LEFT JOIN departments d ON a.dept_id = d.id
+          WHERE ti.transfer_id = $1`, [id]),
+        pool.query('SELECT name FROM users WHERE id=$1', [transfer.initiated_by]),
+      ])
+
+      const baseUrl        = process.env.APPROVAL_BASE_URL || 'http://localhost:3001'
+      const managerApprove = `${baseUrl}/api/transfers/${id}/approve?token=${newToken}`
+      const managerReject  = `${baseUrl}/api/transfers/${id}/reject?token=${newToken}`
+
+      try {
+        await sendHtml(transfer.manager_email,
+          `Final Approval Required: Asset Transfer ${transfer.transfer_code}`,
+          buildApprovalEmail({
+            transfer,
+            fromPlant:   fromPlantR.rows[0]?.name || 'Unknown',
+            toPlant:     toPlantR.rows[0]?.name   || 'Unknown',
+            initiatedBy: initiatedByR.rows[0]?.name || 'Admin',
+            assets:      assetsR.rows,
+            approveUrl:  managerApprove,
+            rejectUrl:   managerReject,
+          }))
+      } catch (emailErr) {
+        console.error('✗ Stage-2 email send failed:', emailErr.message)
+      }
+
+      await writeAudit(null, 'Transfer Approved (Dept Head)', 'Transfer',
+        `${transfer.transfer_code} approved by Department Head, forwarded to ${transfer.manager_email} for final approval`, '0.0.0.0')
+      await createNotification('transfer_dept_head_approved',
+        `${transfer.transfer_code} approved by the Department Head — forwarded to ${transfer.manager_email} for final approval`,
+        transfer.transfer_code, transfer.id)
+
+      return res.send(buildApprovalResultHtml(
+        true, transfer.transfer_code, null, 'Transfer',
+        `Forwarded to ${transfer.manager_email} for final approval.`
+      ))
+    }
+
+    // ── Stage 2 (final): Manager approves → move to In Transit ──
     await pool.query(
       `UPDATE transfers
        SET status='In Transit', approved_at=NOW(), approved_by_name='Email Approval',
@@ -1392,10 +1946,11 @@ app.get('/api/transfers/:id/reject', async (req, res) => {
       )
     }
 
+    const rejectedByStage = transfer.approval_stage === 'dept_head' ? 'Department Head' : 'Manager'
     await writeAudit(null, 'Transfer Rejected', 'Transfer',
-      `${transfer.transfer_code} rejected via email`, '0.0.0.0')
+      `${transfer.transfer_code} rejected by ${rejectedByStage} via email`, '0.0.0.0')
     await createNotification('transfer_rejected',
-      `${transfer.transfer_code} is rejected by the manager of ${transfer.manager_email}`,
+      `${transfer.transfer_code} is rejected by the ${rejectedByStage}`,
       transfer.transfer_code, transfer.id)
 
     res.send(buildApprovalResultHtml(false, transfer.transfer_code, reason || 'Rejected.'))
@@ -1406,7 +1961,6 @@ app.get('/api/transfers/:id/reject', async (req, res) => {
 })
 
 // ── PUT /api/transfers/:id/complete — mark physically dispatched
-// Call this when assets physically reach destination
 app.put('/api/transfers/:id/complete', authMiddleware, requireRole('Admin','Manager'), async (req, res) => {
   try {
     const { id } = req.params
@@ -1433,20 +1987,95 @@ app.put('/api/transfers/:id/complete', authMiddleware, requireRole('Admin','Mana
       `${tr.rows[0].transfer_code} marked as completed`, req.ip)
 
     res.json({ message: 'Transfer completed. Asset locations updated.' })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+})
+
+// ── POST /api/transfers/:id/resend-approval — regenerate token & resend email ──
+app.post('/api/transfers/:id/resend-approval', authMiddleware, sensitiveLimiter, requireRole('Admin','Manager'), async (req, res) => {
+  try {
+    const { id } = req.params
+    const tr = await pool.query(`
+      SELECT t.*, fp.name AS from_plant_name, fp.location AS from_plant_location,
+             tp.name AS to_plant_name, tp.location AS to_plant_location,
+             u.name AS initiated_by_name
+      FROM transfers t
+      LEFT JOIN plants fp ON t.from_plant_id = fp.id
+      LEFT JOIN plants tp ON t.to_plant_id   = tp.id
+      LEFT JOIN users u   ON t.initiated_by  = u.id
+      WHERE t.id=$1`, [id])
+    if (!tr.rows.length) return res.status(404).json({ error: 'Transfer not found' })
+    const transfer = tr.rows[0]
+    if (transfer.status !== 'Pending Approval')
+      return res.status(400).json({ error: 'Transfer is not pending approval' })
+
+    // Stage-aware: resend to whichever approver's turn it currently is
+    const recipient = transfer.approval_stage === 'manager' ? transfer.manager_email : transfer.dept_head_email
+
+    const token      = require('crypto').randomBytes(32).toString('hex')
+    const tokenExpiry = new Date(Date.now() + (parseInt(process.env.APPROVAL_TOKEN_EXPIRY_HOURS || 74)) * 3600000)
+    await pool.query(
+      `UPDATE transfers SET approval_token=$1, approval_token_expires=$2 WHERE id=$3`,
+      [token, tokenExpiry, id]
+    )
+
+    const assets = await pool.query(`
+      SELECT a.asset_code AS asset_tag, a.name, a.category, a.acquisition_value AS value,
+             d.name AS dept_name
+      FROM transfer_items ti
+      JOIN assets a ON ti.asset_id = a.id
+      LEFT JOIN departments d ON a.dept_id = d.id
+      WHERE ti.transfer_id = $1`, [id])
+
+    const baseUrl    = process.env.APPROVAL_BASE_URL || 'http://localhost:3001'
+    const approveUrl = `${baseUrl}/api/transfers/${id}/approve?token=${token}`
+    const rejectUrl  = `${baseUrl}/api/transfers/${id}/reject?token=${token}`
+
+    let emailWarning = null
+    try {
+      await sendHtml(recipient,
+        `[Resent] Transfer Approval Required: ${transfer.transfer_code}`,
+        buildApprovalEmail({
+          transfer,
+          fromPlant:   transfer.from_plant_name || 'Unknown',
+          toPlant:     transfer.to_plant_name   || 'Unknown',
+          initiatedBy: transfer.initiated_by_name || 'Admin',
+          assets:      assets.rows,
+          approveUrl,
+          rejectUrl,
+        })
+      )
+    } catch (e) {
+      emailWarning = e.message
+    }
+
+    await writeAudit(req.user.id, 'Transfer Approval Resent', 'Transfer',
+      `Transfer approval email resent for ${transfer.transfer_code} to ${recipient}`, req.ip)
+
+    res.json({ ok: true, email_warning: emailWarning })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ── POST /api/transfers/:id/return — NOW SENDS APPROVAL EMAIL ──
-// Instead of completing instantly, this creates a return in
-// "Pending Approval" status and emails the same manager_email
-// (or the one passed in) for approval.
 app.post('/api/transfers/:id/return', authMiddleware, requireRole('Admin','Manager'), async (req, res) => {
   try {
     const { id } = req.params
-    const { asset_ids, returned_by, return_date, notes, manager_email } = req.body
+    const { asset_ids, returned_by, return_date, notes, dept_head_email, manager_email } = req.body
 
     if (!asset_ids?.length)
       return res.status(400).json({ error: 'Select at least one asset to return' })
+    if (!dept_head_email)
+      return res.status(400).json({ error: 'Department Head email is required for approval' })
+    if (!manager_email)
+      return res.status(400).json({ error: 'Manager email is required for approval' })
+
+    const initiatorEmail = (req.user.email || '').toLowerCase()
+    if (initiatorEmail && [dept_head_email, manager_email].map(e => String(e).toLowerCase()).includes(initiatorEmail))
+      return res.status(400).json({ error: 'You cannot select yourself as an approver' })
+
+    for (const e of [dept_head_email, manager_email]) {
+      const emErr = emailError(e)
+      if (emErr) return res.status(400).json({ error: `Approver email: ${emErr}` })
+    }
 
     const tr = await pool.query('SELECT * FROM transfers WHERE id=$1', [id])
     if (!tr.rows.length) return res.status(404).json({ error: 'Transfer not found' })
@@ -1457,11 +2086,6 @@ app.post('/api/transfers/:id/return', authMiddleware, requireRole('Admin','Manag
     if (transfer.transfer_type !== 'Returnable')
       return res.status(400).json({ error: 'Only Returnable transfers can have returns' })
 
-    const returnEmail = manager_email || transfer.manager_email
-    if (!returnEmail)
-      return res.status(400).json({ error: 'Manager email is required for return approval' })
-
-    // Get all assets in this transfer
     const allItems = await pool.query(
       'SELECT asset_id FROM transfer_items WHERE transfer_id=$1', [id])
     const allAssetIds = allItems.rows.map(r => r.asset_id)
@@ -1470,7 +2094,6 @@ app.post('/api/transfers/:id/return', authMiddleware, requireRole('Admin','Manag
     if (invalid.length)
       return res.status(400).json({ error: `Asset IDs not in this transfer: ${invalid.join(', ')}` })
 
-    // Check not already returned or pending return
     const alreadyHandled = await pool.query(`
       SELECT ri.asset_id FROM return_items ri
       JOIN transfer_returns tr2 ON ri.return_id = tr2.id
@@ -1486,7 +2109,15 @@ app.post('/api/transfers/:id/return', authMiddleware, requireRole('Admin','Manag
     const token        = crypto.randomBytes(32).toString('hex')
     const tokenExpiry  = new Date(Date.now() + (parseInt(process.env.APPROVAL_TOKEN_EXPIRY_HOURS||74)) * 3600000)
 
-    // Determine if this will be a full or partial return (once approved)
+    const [toPlantForChallan, challanSettings] = await Promise.all([
+      pool.query('SELECT challan_prefix, code FROM plants WHERE id=$1', [transfer.to_plant_id]),
+      getChallanSettings(),
+    ])
+    const challanNo = await nextChallanNo(
+      toPlantForChallan.rows[0]?.challan_prefix || toPlantForChallan.rows[0]?.code,
+      'return', challanSettings.return_doc_type, challanSettings.seq_padding
+    )
+
     const returnedSoFarR = await pool.query(`
       SELECT COUNT(DISTINCT ri.asset_id)::int AS cnt
       FROM return_items ri
@@ -1496,20 +2127,18 @@ app.post('/api/transfers/:id/return', authMiddleware, requireRole('Admin','Manag
     const totalInTransfer = allAssetIds.length
     const wouldBeFullAfterThis = (returnedSoFar + asset_ids.length) >= totalInTransfer
 
-    // Create return record — PENDING APPROVAL (not yet moved)
     const ret = await pool.query(
       `INSERT INTO transfer_returns
-       (return_code, transfer_id, return_date, returned_by, notes,
-        status, approval_status, manager_email, approval_token, approval_token_expires, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,'Pending Approval',$7,$8,$9,NOW()) RETURNING *`,
-      [returnCode, id, return_date||new Date().toISOString().split('T')[0],
+       (return_code, challan_no, transfer_id, return_date, returned_by, notes,
+        status, approval_status, dept_head_email, manager_email, approval_stage, approval_token, approval_token_expires, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'Pending Approval',$8,$9,'dept_head',$10,$11,NOW()) RETURNING *`,
+      [returnCode, challanNo, id, return_date||new Date().toISOString().split('T')[0],
        returned_by||req.user.name, notes||null,
        wouldBeFullAfterThis ? 'Completed' : 'Partial',
-       returnEmail, token, tokenExpiry]
+       dept_head_email, manager_email, token, tokenExpiry]
     )
     const transferReturn = ret.rows[0]
 
-    // Insert return items (linked but assets NOT moved yet)
     for (const asset_id of asset_ids) {
       await pool.query(
         'INSERT INTO return_items (return_id, asset_id) VALUES ($1,$2)',
@@ -1517,13 +2146,11 @@ app.post('/api/transfers/:id/return', authMiddleware, requireRole('Admin','Manag
       )
     }
 
-    // Mark assets as Pending Transfer (locked) while return is pending approval
     await pool.query(
       `UPDATE assets SET status='Pending Transfer', updated_at=NOW() WHERE id=ANY($1::int[])`,
       [asset_ids]
     )
 
-    // Build & send return approval email
     const [fromPlantR, toPlantR, assetsR] = await Promise.all([
       pool.query('SELECT name, location FROM plants WHERE id=$1', [transfer.from_plant_id]),
       pool.query('SELECT name, location FROM plants WHERE id=$1', [transfer.to_plant_id]),
@@ -1553,14 +2180,14 @@ app.post('/api/transfers/:id/return', authMiddleware, requireRole('Admin','Manag
 
     let emailWarning = null
     try {
-      await sendHtml(returnEmail, `Approval Required: Asset Return ${returnCode}`, emailHtml)
+      await sendHtml(dept_head_email, `Approval Required: Asset Return ${returnCode}`, emailHtml)
     } catch (emailErr) {
       console.error('Return email send failed:', emailErr.message)
       emailWarning = `Email could not be sent: ${emailErr.message}`
     }
 
     await writeAudit(req.user.id, 'Return Initiated', 'Transfer',
-      `${returnCode}: ${asset_ids.length} asset(s) pending return approval for ${transfer.transfer_code}`, req.ip)
+      `${returnCode}: ${asset_ids.length} asset(s) pending return approval (Dept Head: ${dept_head_email}, Manager: ${manager_email}) for ${transfer.transfer_code}`, req.ip)
 
     res.status(201).json({
       ...transferReturn,
@@ -1569,11 +2196,10 @@ app.post('/api/transfers/:id/return', authMiddleware, requireRole('Admin','Manag
     })
   } catch (err) {
     console.error('Return create error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
-// ── GET /api/transfer-returns/:id/approve?token=xxx ───────────
 app.get('/api/transfer-returns/:id/approve', async (req, res) => {
   try {
     const { id } = req.params
@@ -1596,17 +2222,71 @@ app.get('/api/transfer-returns/:id/approve', async (req, res) => {
     const tr = await pool.query('SELECT * FROM transfers WHERE id=$1', [ret.transfer_id])
     const transfer = tr.rows[0]
 
-    // Mark return approved
+    if (ret.approval_stage === 'dept_head') {
+      const newToken   = crypto.randomBytes(32).toString('hex')
+      const newExpiry  = new Date(Date.now() + (parseInt(process.env.APPROVAL_TOKEN_EXPIRY_HOURS||74)) * 3600000)
+
+      await pool.query(
+        `UPDATE transfer_returns
+         SET dept_head_approved_at=NOW(), approval_stage='manager',
+             approval_token=$1, approval_token_expires=$2
+         WHERE id=$3`, [newToken, newExpiry, id])
+
+      const [fromPlantR, toPlantR, assetsR] = await Promise.all([
+        pool.query('SELECT name, location FROM plants WHERE id=$1', [transfer.from_plant_id]),
+        pool.query('SELECT name, location FROM plants WHERE id=$1', [transfer.to_plant_id]),
+        pool.query(`
+          SELECT a.asset_code AS asset_tag, a.name, a.category,
+                 a.acquisition_value AS value, d.name AS dept_name
+          FROM return_items ri
+          JOIN assets a ON ri.asset_id = a.id
+          LEFT JOIN departments d ON a.dept_id = d.id
+          WHERE ri.return_id = $1`, [id]),
+      ])
+
+      const baseUrl        = process.env.APPROVAL_BASE_URL || 'http://localhost:3001'
+      const managerApprove = `${baseUrl}/api/transfer-returns/${id}/approve?token=${newToken}`
+      const managerReject  = `${baseUrl}/api/transfer-returns/${id}/reject?token=${newToken}`
+
+      try {
+        await sendHtml(ret.manager_email,
+          `Final Approval Required: Asset Return ${ret.return_code}`,
+          buildReturnApprovalEmail({
+            transferReturn: ret,
+            transfer,
+            fromPlant:   fromPlantR.rows[0]?.name || 'Unknown',
+            toPlant:     toPlantR.rows[0]?.name   || 'Unknown',
+            returnedBy:  ret.returned_by || 'Unknown',
+            assets:      assetsR.rows,
+            isFullReturn: ret.status === 'Completed',
+            approveUrl:  managerApprove,
+            rejectUrl:   managerReject,
+          })
+        )
+      } catch (emailErr) {
+        console.error('✗ Stage-2 return email send failed:', emailErr.message)
+      }
+
+      await writeAudit(null, 'Return Approved (Dept Head)', 'Transfer',
+        `${ret.return_code} approved by Department Head, forwarded to ${ret.manager_email} for final approval`, '0.0.0.0')
+      await createNotification('return_dept_head_approved',
+        `${ret.return_code} (${transfer.transfer_code}) approved by Department Head — forwarded to ${ret.manager_email} for final approval`,
+        ret.return_code, ret.transfer_id)
+
+      return res.send(buildApprovalResultHtml(
+        true, ret.return_code, null, 'Return',
+        `Forwarded to ${ret.manager_email} for final approval.`
+      ))
+    }
+
     await pool.query(
       `UPDATE transfer_returns
        SET approval_status='Approved', approved_at=NOW(), approved_by_name='Email Approval', approval_token=NULL
        WHERE id=$1`, [id])
 
-    // Get assets in this return
     const items = await pool.query('SELECT asset_id FROM return_items WHERE return_id=$1', [id])
     const assetIds = items.rows.map(r => r.asset_id)
 
-    // Move assets back to original (from) plant
     if (assetIds.length) {
       await pool.query(
         `UPDATE assets SET plant_id=$1, status='Active', updated_at=NOW() WHERE id=ANY($2::int[])`,
@@ -1614,7 +2294,6 @@ app.get('/api/transfer-returns/:id/approve', async (req, res) => {
       )
     }
 
-    // Update transfer status based on whether this completes it
     const newTransferStatus = ret.status === 'Completed' ? 'Returned' : 'Partially Returned'
     await pool.query(
       `UPDATE transfers SET status=$1, updated_at=NOW() WHERE id=$2`,
@@ -1634,7 +2313,6 @@ app.get('/api/transfer-returns/:id/approve', async (req, res) => {
   }
 })
 
-// ── GET /api/transfer-returns/:id/reject?token=xxx ─────────────
 app.get('/api/transfer-returns/:id/reject', async (req, res) => {
   try {
     const { id } = req.params
@@ -1661,7 +2339,6 @@ app.get('/api/transfer-returns/:id/reject', async (req, res) => {
       [reason || 'Rejected via email', id]
     )
 
-    // Restore assets to Active (still at the "to" plant — return didn't happen)
     const items = await pool.query('SELECT asset_id FROM return_items WHERE return_id=$1', [id])
     const assetIds = items.rows.map(r => r.asset_id)
     if (assetIds.length) {
@@ -1674,7 +2351,7 @@ app.get('/api/transfer-returns/:id/reject', async (req, res) => {
     await writeAudit(null, 'Return Rejected', 'Transfer',
       `${ret.return_code} rejected via email`, '0.0.0.0')
     await createNotification('return_rejected',
-      `${ret.return_code} is rejected by the manager of ${ret.manager_email}`,
+      `${ret.return_code} is rejected by approver`,
       ret.return_code, ret.transfer_id)
 
     res.send(buildApprovalResultHtml(false, ret.return_code, reason || 'Rejected.', 'Return'))
@@ -1684,71 +2361,8 @@ app.get('/api/transfer-returns/:id/reject', async (req, res) => {
   }
 })
 
-
-// ── POST /api/transfers/:id/resend-approval — regenerate token & resend email ──
-app.post('/api/transfers/:id/resend-approval', authMiddleware, requireRole('Admin','Manager'), async (req, res) => {
-  try {
-    const { id } = req.params
-    const tr = await pool.query(`
-      SELECT t.*, fp.name AS from_plant_name, fp.location AS from_plant_location,
-             tp.name AS to_plant_name, tp.location AS to_plant_location,
-             u.name AS initiated_by_name
-      FROM transfers t
-      LEFT JOIN plants fp ON t.from_plant_id = fp.id
-      LEFT JOIN plants tp ON t.to_plant_id   = tp.id
-      LEFT JOIN users u   ON t.initiated_by  = u.id
-      WHERE t.id=$1`, [id])
-    if (!tr.rows.length) return res.status(404).json({ error: 'Transfer not found' })
-    const transfer = tr.rows[0]
-    if (transfer.status !== 'Pending Approval')
-      return res.status(400).json({ error: 'Transfer is not pending approval' })
-
-    const token      = require('crypto').randomBytes(32).toString('hex')
-    const tokenExpiry = new Date(Date.now() + (parseInt(process.env.APPROVAL_TOKEN_EXPIRY_HOURS || 74)) * 3600000)
-    await pool.query(
-      `UPDATE transfers SET approval_token=$1, approval_token_expires=$2 WHERE id=$3`,
-      [token, tokenExpiry, id]
-    )
-
-    const assets = await pool.query(`
-      SELECT a.asset_code AS asset_tag, a.name, a.category, a.acquisition_value AS value,
-             d.name AS dept_name
-      FROM transfer_items ti
-      JOIN assets a ON ti.asset_id = a.id
-      LEFT JOIN departments d ON a.dept_id = d.id
-      WHERE ti.transfer_id = $1`, [id])
-
-    const baseUrl    = process.env.APPROVAL_BASE_URL || 'http://localhost:3001'
-    const approveUrl = `${baseUrl}/api/transfers/${id}/approve?token=${token}`
-    const rejectUrl  = `${baseUrl}/api/transfers/${id}/reject?token=${token}`
-
-    let emailWarning = null
-    try {
-      await sendHtml(transfer.manager_email,
-        `[Resent] Transfer Approval Required: ${transfer.transfer_code}`,
-        buildApprovalEmail({
-          transfer,
-          fromPlant:   transfer.from_plant_name || 'Unknown',
-          toPlant:     transfer.to_plant_name   || 'Unknown',
-          initiatedBy: transfer.initiated_by_name || 'Admin',
-          assets:      assets.rows,
-          approveUrl,
-          rejectUrl,
-        })
-      )
-    } catch (e) {
-      emailWarning = e.message
-    }
-
-    await writeAudit(req.user.id, 'Transfer Approval Resent', 'Transfer',
-      `Approval email resent for ${transfer.transfer_code} to ${transfer.manager_email}`, req.ip)
-
-    res.json({ ok: true, email_warning: emailWarning })
-  } catch (err) { res.status(500).json({ error: err.message }) }
-})
-
 // ── POST /api/transfer-returns/:id/resend-approval — regenerate token & resend email ──
-app.post('/api/transfer-returns/:id/resend-approval', authMiddleware, requireRole('Admin','Manager'), async (req, res) => {
+app.post('/api/transfer-returns/:id/resend-approval', authMiddleware, sensitiveLimiter, requireRole('Admin','Manager'), async (req, res) => {
   try {
     const { id } = req.params
     const rr = await pool.query('SELECT * FROM transfer_returns WHERE id=$1', [id])
@@ -1814,7 +2428,7 @@ app.post('/api/transfer-returns/:id/resend-approval', authMiddleware, requireRol
       `Return approval email resent for ${ret.return_code} to ${recipientEmail}`, req.ip)
 
     res.json({ ok: true, email_warning: emailWarning })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ── DELETE /api/transfer-returns/:id — cancel a pending return ──
@@ -1857,7 +2471,7 @@ app.delete('/api/transfer-returns/:id', authMiddleware, requireRole('Admin','Man
       `${ret.return_code} cancelled`, req.ip)
 
     res.status(204).send()
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ── GET /api/notifications ────────────────────────────────────
@@ -1867,7 +2481,7 @@ app.get('/api/notifications', authMiddleware, requireRole('Admin', 'Manager'), a
       `SELECT * FROM notifications ORDER BY created_at DESC LIMIT 50`
     )
     res.json(r.rows)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ── PUT /api/notifications/read-all ──────────────────────────
@@ -1875,7 +2489,7 @@ app.put('/api/notifications/read-all', authMiddleware, requireRole('Admin', 'Man
   try {
     await pool.query(`UPDATE notifications SET is_read=true`)
     res.json({ ok: true })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ── PUT /api/notifications/:id/read ──────────────────────────
@@ -1883,7 +2497,7 @@ app.put('/api/notifications/:id/read', authMiddleware, requireRole('Admin', 'Man
   try {
     await pool.query(`UPDATE notifications SET is_read=true WHERE id=$1`, [req.params.id])
     res.json({ ok: true })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ── GET /api/transfers/:id/returnable — which assets can be returned
@@ -1912,7 +2526,7 @@ app.get('/api/transfers/:id/returnable', authMiddleware, async (req, res) => {
     const returnable  = all.rows.filter(a => !returnedIds.has(a.asset_id))
 
     res.json(returnable)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ── DELETE /api/transfers/:id — only pending approval transfers
@@ -1936,7 +2550,390 @@ app.delete('/api/transfers/:id', authMiddleware, requireRole('Admin'), async (re
 
     await pool.query('DELETE FROM transfers WHERE id=$1', [id])
     res.status(204).send()
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+})
+
+
+// ════════════════════════════════════════════════════════════
+// ASSET REQUESTS (3-stage approval: Dept Head → Asset Codes → Manager)
+// ════════════════════════════════════════════════════════════
+
+// Send the stage email for whichever approver is currently active.
+async function sendAssetRequestStageEmail(reqRow, recipient, stageLabel) {
+  const [deptR, userR, itemsR] = await Promise.all([
+    reqRow.dept_id      ? pool.query('SELECT name FROM departments WHERE id=$1', [reqRow.dept_id])    : Promise.resolve({ rows: [] }),
+    reqRow.requested_by ? pool.query('SELECT name FROM users WHERE id=$1', [reqRow.requested_by])     : Promise.resolve({ rows: [] }),
+    pool.query(`SELECT i.*, p.name AS plant_name
+                FROM asset_request_items i LEFT JOIN plants p ON i.plant_id = p.id
+                WHERE i.request_id=$1 ORDER BY i.seq`, [reqRow.id]),
+  ])
+  const baseUrl    = process.env.APPROVAL_BASE_URL || 'http://localhost:3001'
+  const approveUrl = `${baseUrl}/api/asset-requests/${reqRow.id}/approve?token=${reqRow.approval_token}`
+  const rejectUrl  = `${baseUrl}/api/asset-requests/${reqRow.id}/reject?token=${reqRow.approval_token}`
+  const html = buildAssetRequestApprovalEmail({
+    request:     reqRow,
+    requestedBy: userR.rows[0]?.name || 'A user',
+    deptName:    deptR.rows[0]?.name || '—',
+    items:       itemsR.rows,
+    approveUrl, rejectUrl, stageLabel,
+  })
+  return sendHtml(recipient, `Asset Request Approval Required: ${reqRow.request_code}`, html)
+}
+
+// ── GET /api/asset-requests — list + stats ───────────────────
+app.get('/api/asset-requests', authMiddleware, async (req, res) => {
+  try {
+    const list = await pool.query(`
+      SELECT ar.*,
+             d.name AS dept_name,
+             u.name AS requested_by_name,
+             (SELECT COUNT(*)::int FROM asset_request_items i WHERE i.request_id = ar.id) AS item_count,
+             (SELECT i.material_description FROM asset_request_items i
+              WHERE i.request_id = ar.id ORDER BY i.seq LIMIT 1) AS first_item
+      FROM asset_requests ar
+      LEFT JOIN departments d ON ar.dept_id = d.id
+      LEFT JOIN users u       ON ar.requested_by = u.id
+      ORDER BY ar.created_at DESC
+    `)
+    const stats = await pool.query(`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status='Pending Dept Head')::int   AS pending_dept_head,
+        COUNT(*) FILTER (WHERE status='Waiting Asset Code')::int  AS waiting_asset_code,
+        COUNT(*) FILTER (WHERE status='Pending Manager')::int     AS pending_manager,
+        COUNT(*) FILTER (WHERE status='Approved')::int            AS approved,
+        COUNT(*) FILTER (WHERE status='Rejected')::int            AS rejected
+      FROM asset_requests
+    `)
+    res.json({ requests: list.rows, stats: stats.rows[0] })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+})
+
+// ── GET /api/asset-requests/:id — single with line items ─────
+app.get('/api/asset-requests/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params
+    const r = await pool.query(`
+      SELECT ar.*,
+             d.name AS dept_name,
+             u.name AS requested_by_name
+      FROM asset_requests ar
+      LEFT JOIN departments d ON ar.dept_id = d.id
+      LEFT JOIN users u       ON ar.requested_by = u.id
+      WHERE ar.id = $1`, [id])
+    if (!r.rows.length) return res.status(404).json({ error: 'Asset request not found' })
+    const items = await pool.query(`
+      SELECT i.*, p.name AS plant_name
+      FROM asset_request_items i LEFT JOIN plants p ON i.plant_id = p.id
+      WHERE i.request_id=$1 ORDER BY i.seq`, [id])
+    res.json({ ...r.rows[0], items: items.rows })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+})
+
+// ── POST /api/asset-requests — create (any logged-in user) ───
+app.post('/api/asset-requests', authMiddleware, sensitiveLimiter, async (req, res) => {
+  const client = await pool.connect()
+  try {
+    const { asset_owner, dept_id, dept_head_email, manager_email, items } = req.body
+
+    if (!dept_id)            return res.status(400).json({ error: 'Department is required' })
+    if (!asset_owner?.trim())return res.status(400).json({ error: 'Asset Owner is required' })
+    if (!dept_head_email)    return res.status(400).json({ error: 'Department Head approver is required' })
+    if (!manager_email)      return res.status(400).json({ error: 'Manager approver is required' })
+    // Prevent self-approval: the initiator cannot be their own approver
+    const initiatorEmail = (req.user.email || '').toLowerCase()
+    if (initiatorEmail && [dept_head_email, manager_email].map(e => String(e).toLowerCase()).includes(initiatorEmail))
+      return res.status(400).json({ error: 'You cannot select yourself as an approver' })
+    for (const e of [dept_head_email, manager_email]) {
+      const emErr = emailError(e)
+      if (emErr) return res.status(400).json({ error: `Approver email: ${emErr}` })
+    }
+    if (!Array.isArray(items) || items.length === 0)
+      return res.status(400).json({ error: 'Add at least one asset line item' })
+    if (items.length > 200)  return res.status(400).json({ error: 'A request cannot exceed 200 line items' })
+
+    // Load master + plant sets once to validate restricted fields against them
+    const [ccRes, ctrRes, plantRes] = await Promise.all([
+      pool.query(`SELECT value FROM asset_masters WHERE is_active=true AND type='company_code'`),
+      pool.query(`SELECT value FROM asset_masters WHERE is_active=true AND type='cost_center'`),
+      pool.query(`SELECT id FROM plants WHERE status='Active'`),
+    ])
+    const companySet = new Set(ccRes.rows.map(r => r.value))
+    const costSet    = new Set(ctrRes.rows.map(r => r.value))
+    const plantSet   = new Set(plantRes.rows.map(r => r.id))
+
+    // Validate + normalize each line item
+    const norm = []
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i]
+      const n = i + 1
+      if (!it.material_description?.trim()) return res.status(400).json({ error: `Item ${n}: Material Description is required` })
+      const qty = parseInt(it.quantity, 10)
+      if (isNaN(qty) || qty < 1)            return res.status(400).json({ error: `Item ${n}: Quantity must be a positive whole number` })
+      if (qty > 100000)                     return res.status(400).json({ error: `Item ${n}: Quantity is too large` })
+      if (!it.company_code?.trim())         return res.status(400).json({ error: `Item ${n}: Company Code is required` })
+      if (!it.cost_center?.trim())          return res.status(400).json({ error: `Item ${n}: Cost Center is required` })
+      if (!it.plant_id)                     return res.status(400).json({ error: `Item ${n}: Asset Location is required` })
+      // Restricted fields must match configured master data (reject arbitrary values)
+      if (companySet.size && !companySet.has(it.company_code.trim()))
+        return res.status(400).json({ error: `Item ${n}: Company Code "${it.company_code.trim()}" is not a valid master value` })
+      if (costSet.size && !costSet.has(it.cost_center.trim()))
+        return res.status(400).json({ error: `Item ${n}: Cost Center "${it.cost_center.trim()}" is not a valid master value` })
+      if (!plantSet.has(parseInt(it.plant_id, 10)))
+        return res.status(400).json({ error: `Item ${n}: Asset Location is not a valid active plant` })
+      const price = it.unit_price != null && it.unit_price !== '' ? parseFloat(String(it.unit_price).replace(/[,₹$]/g, '')) : null
+      if (price != null && (isNaN(price) || price < 0))
+        return res.status(400).json({ error: `Item ${n}: Unit Price must be a non-negative number` })
+      const life = it.asset_life != null && it.asset_life !== '' ? parseInt(it.asset_life, 10) : null
+      if (life != null && life < 0)
+        return res.status(400).json({ error: `Item ${n}: Asset Life cannot be negative` })
+      norm.push({
+        material_description: stripTags(it.material_description.trim()),
+        quantity: qty,
+        unit_price: price,
+        total_amount: price != null ? price * qty : null,
+        company_code: it.company_code.trim(),
+        cost_center: it.cost_center.trim(),
+        project_name: stripTags(it.project_name?.trim()) || null,
+        plant_id: parseInt(it.plant_id, 10),
+        asset_life: life,
+        remarks: stripTags(it.remarks?.trim()) || null,
+      })
+    }
+    const requestTotal = norm.reduce((s, it) => s + (it.total_amount || 0), 0)
+
+    const code   = genRequestCode()
+    const token  = crypto.randomBytes(32).toString('hex')
+    const expiry = new Date(Date.now() + (parseInt(process.env.APPROVAL_TOKEN_EXPIRY_HOURS||74)) * 3600000)
+
+    await client.query('BEGIN')
+    const ins = await client.query(
+      `INSERT INTO asset_requests
+        (request_code, requested_by, asset_owner, dept_id, total_amount, status,
+         dept_head_email, manager_email, approval_token, approval_token_expires, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,'Pending Dept Head',$6,$7,$8,$9,NOW(),NOW())
+       RETURNING *`,
+      [code, req.user.id, stripTags(asset_owner.trim()), dept_id, requestTotal,
+       dept_head_email, manager_email, token, expiry]
+    )
+    const request = ins.rows[0]
+    for (let i = 0; i < norm.length; i++) {
+      const it = norm[i]
+      await client.query(
+        `INSERT INTO asset_request_items
+          (request_id, seq, material_description, quantity, unit_price, total_amount,
+           company_code, cost_center, project_name, plant_id, asset_life, remarks)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [request.id, i + 1, it.material_description, it.quantity, it.unit_price, it.total_amount,
+         it.company_code, it.cost_center, it.project_name, it.plant_id, it.asset_life, it.remarks]
+      )
+    }
+    await client.query('COMMIT')
+
+    let emailWarning = null
+    try {
+      const result = await sendAssetRequestStageEmail(request, dept_head_email, 'Department Head Approval')
+      if (result?.skipped) emailWarning = result.warning || 'Email service not configured'
+    } catch (e) {
+      emailWarning = `Email delivery failed: ${e.message}`
+    }
+
+    await writeAudit(req.user.id, 'Asset Request Created', 'Asset Requests',
+      `${code}: ${norm.length} item(s), approval email sent to ${dept_head_email}`, req.ip)
+
+    res.status(201).json({ ...request, email_warning: emailWarning })
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {})
+    console.error('Asset request create error:', err)
+    res.status(500).json({ error: 'Internal server error' })
+  } finally {
+    client.release()
+  }
+})
+
+// ── PUT /api/asset-requests/:id/codes — assign codes (Admin/Manager) ──
+app.put('/api/asset-requests/:id/codes', authMiddleware, requireRole('Admin','Manager'), async (req, res) => {
+  try {
+    const { id } = req.params
+    const { codes } = req.body
+
+    const r = await pool.query('SELECT * FROM asset_requests WHERE id=$1', [id])
+    if (!r.rows.length) return res.status(404).json({ error: 'Asset request not found' })
+    const request = r.rows[0]
+    if (request.status !== 'Waiting Asset Code')
+      return res.status(400).json({ error: 'Asset codes can only be assigned while the request is Waiting for Asset Code' })
+
+    const itemsRes = await pool.query('SELECT id, seq FROM asset_request_items WHERE request_id=$1 ORDER BY seq', [id])
+    const items = itemsRes.rows
+
+    const clean = (Array.isArray(codes) ? codes : []).map(c => String(c || '').trim())
+    if (clean.some(c => !c))
+      return res.status(400).json({ error: 'All asset code fields must be filled in' })
+    if (clean.length !== items.length)
+      return res.status(400).json({ error: `Expected ${items.length} asset code(s) — one per line item — got ${clean.length}` })
+    const dupes = clean.filter((c, i) => clean.indexOf(c) !== i)
+    if (dupes.length)
+      return res.status(400).json({ error: `Duplicate asset code(s) in this request: ${[...new Set(dupes)].join(', ')}` })
+
+    // Assign one code per line item (in seq order)
+    for (let i = 0; i < items.length; i++) {
+      await pool.query('UPDATE asset_request_items SET asset_code=$1 WHERE id=$2', [clean[i], items[i].id])
+    }
+
+    const token  = crypto.randomBytes(32).toString('hex')
+    const expiry = new Date(Date.now() + (parseInt(process.env.APPROVAL_TOKEN_EXPIRY_HOURS||74)) * 3600000)
+    const upd = await pool.query(
+      `UPDATE asset_requests
+       SET status='Pending Manager', approval_token=$1, approval_token_expires=$2, updated_at=NOW()
+       WHERE id=$3 RETURNING *`, [token, expiry, id]
+    )
+    const updated = upd.rows[0]
+
+    let emailWarning = null
+    try {
+      const result = await sendAssetRequestStageEmail(updated, updated.manager_email, 'Final Manager Approval')
+      if (result?.skipped) emailWarning = result.warning || 'Email service not configured'
+    } catch (e) {
+      emailWarning = `Email delivery failed: ${e.message}`
+    }
+
+    await writeAudit(req.user.id, 'Asset Codes Assigned', 'Asset Requests',
+      `${request.request_code}: ${clean.length} codes assigned, forwarded to ${updated.manager_email} for final approval`, req.ip)
+    await createNotification('asset_request_codes_assigned',
+      `${request.request_code}: asset codes assigned — forwarded to ${updated.manager_email} for final approval`,
+      request.request_code, request.id)
+
+    res.json({ ...updated, email_warning: emailWarning })
+  } catch (err) {
+    console.error('Assign asset codes error:', err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// ── POST /api/asset-requests/:id/resend-approval ─────────────
+app.post('/api/asset-requests/:id/resend-approval', authMiddleware, sensitiveLimiter, requireRole('Admin','Manager'), async (req, res) => {
+  try {
+    const { id } = req.params
+    const r = await pool.query('SELECT * FROM asset_requests WHERE id=$1', [id])
+    if (!r.rows.length) return res.status(404).json({ error: 'Asset request not found' })
+    const request = r.rows[0]
+
+    let recipient, stageLabel
+    if (request.status === 'Pending Dept Head')      { recipient = request.dept_head_email; stageLabel = 'Department Head Approval' }
+    else if (request.status === 'Pending Manager')   { recipient = request.manager_email;   stageLabel = 'Final Manager Approval' }
+    else return res.status(400).json({ error: 'This request is not awaiting email approval right now' })
+
+    const token  = crypto.randomBytes(32).toString('hex')
+    const expiry = new Date(Date.now() + (parseInt(process.env.APPROVAL_TOKEN_EXPIRY_HOURS||74)) * 3600000)
+    await pool.query('UPDATE asset_requests SET approval_token=$1, approval_token_expires=$2 WHERE id=$3', [token, expiry, id])
+
+    let emailWarning = null
+    try {
+      const result = await sendAssetRequestStageEmail({ ...request, approval_token: token }, recipient, stageLabel)
+      if (result?.skipped) emailWarning = result.warning || 'Email service not configured'
+    } catch (e) {
+      emailWarning = e.message
+    }
+
+    await writeAudit(req.user.id, 'Asset Request Approval Resent', 'Asset Requests',
+      `Approval email resent for ${request.request_code} to ${recipient}`, req.ip)
+    res.json({ ok: true, email_warning: emailWarning })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+})
+
+// ── DELETE /api/asset-requests/:id — Admin, only if not Approved ──
+app.delete('/api/asset-requests/:id', authMiddleware, requireRole('Admin'), async (req, res) => {
+  try {
+    const { id } = req.params
+    const r = await pool.query('SELECT status, request_code FROM asset_requests WHERE id=$1', [id])
+    if (!r.rows.length) return res.status(404).json({ error: 'Not found' })
+    if (r.rows[0].status === 'Approved')
+      return res.status(400).json({ error: 'Approved requests cannot be deleted' })
+    await pool.query('DELETE FROM asset_requests WHERE id=$1', [id])  // codes cascade
+    await writeAudit(req.user.id, 'Asset Request Deleted', 'Asset Requests', `${r.rows[0].request_code} deleted`, req.ip)
+    res.status(204).send()
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+})
+
+// ── GET /api/asset-requests/:id/approve?token= — email link ──
+app.get('/api/asset-requests/:id/approve', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { token } = req.query
+    const r = await pool.query('SELECT * FROM asset_requests WHERE id=$1 AND approval_token=$2', [id, token])
+    if (!r.rows.length)
+      return res.status(400).send(buildApprovalResultHtml(false, '?', 'Invalid or expired approval link.', 'Asset Request'))
+    const request = r.rows[0]
+    if (new Date() > new Date(request.approval_token_expires))
+      return res.status(400).send(buildApprovalResultHtml(false, request.request_code, 'This approval link has expired.', 'Asset Request'))
+
+    // Stage 1: Department Head approves → move to asset-code assignment
+    if (request.status === 'Pending Dept Head') {
+      await pool.query(
+        `UPDATE asset_requests SET status='Waiting Asset Code', dept_head_approved_at=NOW(),
+         approval_token=NULL, updated_at=NOW() WHERE id=$1`, [id])
+      await writeAudit(null, 'Asset Request Approved (Dept Head)', 'Asset Requests',
+        `${request.request_code} approved by Department Head — awaiting asset-code assignment`, '0.0.0.0')
+      await createNotification('asset_request_dept_head_approved',
+        `${request.request_code} approved by the Department Head — ready for asset-code assignment`,
+        request.request_code, request.id)
+      return res.send(buildApprovalResultHtml(
+        true, request.request_code, null, 'Asset Request',
+        'The asset team will now assign asset codes, then forward it to the Manager for final approval.'
+      ))
+    }
+
+    // Stage 3 (final): Manager approves → Approved
+    if (request.status === 'Pending Manager') {
+      await pool.query(
+        `UPDATE asset_requests SET status='Approved', manager_approved_at=NOW(),
+         approval_token=NULL, updated_at=NOW() WHERE id=$1`, [id])
+      await writeAudit(null, 'Asset Request Approved', 'Asset Requests',
+        `${request.request_code} given final approval by Manager`, '0.0.0.0')
+      await createNotification('asset_request_approved',
+        `${request.request_code} has been fully approved by the Manager`,
+        request.request_code, request.id)
+      return res.send(buildApprovalResultHtml(true, request.request_code, null, 'Asset Request'))
+    }
+
+    return res.send(buildApprovalResultHtml(true, request.request_code, `Already processed (${request.status}).`, 'Asset Request'))
+  } catch (err) {
+    console.error('Asset request approve error:', err)
+    res.status(500).send('<p>Server error. Please contact admin.</p>')
+  }
+})
+
+// ── GET /api/asset-requests/:id/reject?token= — email link ───
+app.get('/api/asset-requests/:id/reject', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { token, reason } = req.query
+    const r = await pool.query('SELECT * FROM asset_requests WHERE id=$1 AND approval_token=$2', [id, token])
+    if (!r.rows.length)
+      return res.status(400).send(buildApprovalResultHtml(false, '?', 'Invalid or expired link.', 'Asset Request'))
+    const request = r.rows[0]
+    if (new Date() > new Date(request.approval_token_expires))
+      return res.status(400).send(buildApprovalResultHtml(false, request.request_code, 'This link has expired.', 'Asset Request'))
+    if (!['Pending Dept Head', 'Pending Manager'].includes(request.status))
+      return res.send(buildApprovalResultHtml(false, request.request_code, `Already processed (${request.status}).`, 'Asset Request'))
+
+    const rejectedStage = request.status === 'Pending Dept Head' ? 'Department Head' : 'Manager'
+    await pool.query(
+      `UPDATE asset_requests SET status='Rejected', rejected_reason=$1, rejected_stage=$2,
+       approval_token=NULL, updated_at=NOW() WHERE id=$3`,
+      [reason || 'Rejected via email', rejectedStage, id])
+
+    await writeAudit(null, 'Asset Request Rejected', 'Asset Requests',
+      `${request.request_code} rejected by ${rejectedStage} via email`, '0.0.0.0')
+    await createNotification('asset_request_rejected',
+      `${request.request_code} is rejected by the ${rejectedStage}`,
+      request.request_code, request.id)
+
+    res.send(buildApprovalResultHtml(false, request.request_code, reason || 'Rejected.', 'Asset Request'))
+  } catch (err) {
+    console.error('Asset request reject error:', err)
+    res.status(500).send('<p>Server error. Please contact admin.</p>')
+  }
 })
 
 
@@ -1971,7 +2968,7 @@ app.get('/api/masters/lookup', authMiddleware, async (req, res) => {
       company_codes:  mastersGrouped['company_code']  || [],
       cost_centers:   mastersGrouped['cost_center']   || [],
     })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ════════════════════════════════════════════════════════════
@@ -1987,7 +2984,7 @@ app.get('/api/asset-masters', authMiddleware, async (req, res) => {
     const params = type ? [type] : []
     const r = await pool.query(query, params)
     res.json(r.rows)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 app.get('/api/asset-masters/all', authMiddleware, async (req, res) => {
@@ -2004,7 +3001,7 @@ app.get('/api/asset-masters/all', authMiddleware, async (req, res) => {
       grouped[row.type].push({ id: row.id, value: row.value, description: row.description, sort_order: row.sort_order })
     })
     res.json(grouped)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 app.post('/api/asset-masters', authMiddleware, requireRole('Admin'), async (req, res) => {
@@ -2023,7 +3020,8 @@ app.post('/api/asset-masters', authMiddleware, requireRole('Admin'), async (req,
     res.status(201).json(r.rows[0])
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'This value already exists' })
-    res.status(500).json({ error: err.message })
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -2049,7 +3047,8 @@ app.put('/api/asset-masters/:id', authMiddleware, requireRole('Admin'), async (r
     res.json(r.rows[0])
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'This value already exists' })
-    res.status(500).json({ error: err.message })
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -2063,7 +3062,7 @@ app.delete('/api/asset-masters/:id', authMiddleware, requireRole('Admin'), async
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' })
     await writeAudit(req.user.id, 'Master Removed', 'Masters', `${r.rows[0].type}: "${r.rows[0].value}" removed`, req.ip)
     res.status(204).send()
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ════════════════════════════════════════════════════════════
@@ -2120,10 +3119,28 @@ app.post('/api/assets/bulk', authMiddleware, requireRole('Admin', 'Manager'), as
 
     function parseDate(raw, fieldLabel, rowErrs) {
       if (!raw) return null
-      const ddmm = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
       const iso  = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-      if (ddmm) return `${ddmm[3]}-${ddmm[2]}-${ddmm[1]}`
-      if (iso)  return raw
+      if (iso) return raw
+
+      // Slash-separated: could be DD/MM/YYYY, M/D/YYYY, M/D/YY, or D/M/YY
+      const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/)
+      if (slash) {
+        let [, a, b, y] = slash
+        const yr = y.length === 2 ? 2000 + parseInt(y) : parseInt(y)
+        const av = parseInt(a), bv = parseInt(b)
+        let mm, dd
+        if (bv > 12) {
+          // b is definitely the day → M/D format (Excel US locale)
+          mm = String(av).padStart(2, '0')
+          dd = String(bv).padStart(2, '0')
+        } else {
+          // a > 12 means it's DD/MM; otherwise assume DD/MM (system standard)
+          dd = String(av).padStart(2, '0')
+          mm = String(bv).padStart(2, '0')
+        }
+        return `${yr}-${mm}-${dd}`
+      }
+
       rowErrs.push({ field: fieldLabel, error: `"${raw}" must be DD/MM/YYYY` })
       return null
     }
@@ -2265,11 +3282,12 @@ app.post('/api/assets/bulk', authMiddleware, requireRole('Admin', 'Manager'), as
       p.plantId, p.deptId, p.status,
     ]
 
-    const errors       = []
-    const validRoots   = []
+    const errors        = []
+    const validRoots    = []
     const validChildren = []
+    const fileKeys      = new Map()   // "assetCode|subSeq" → first rowNum that claimed it
 
-    // ── Validation loop (all rows) ──────────────────────────────
+    // ── Validation loop (all rows, read-only — no DB writes yet) ─
     for (let i = 0; i < rows.length; i++) {
       const rowNum = i + 2
       const { rowErrs, parsed } = validateRow(rows[i])
@@ -2277,97 +3295,106 @@ app.post('/api/assets/bulk', authMiddleware, requireRole('Admin', 'Manager'), as
         rowErrs.forEach(e => errors.push({ row: rowNum, ...e }))
         continue
       }
-      if (parsed.subSeq === 0) {
-        validRoots.push({ rowNum, parsed })
-      } else {
-        validChildren.push({ rowNum, parsed })
-      }
-    }
 
-    let inserted = 0
-    const inFileRootMap = {}   // asset_code → db id (inserted this run OR pre-existing)
-    const seenRootCodes = new Set()
-
-    // ── Pass 1: root assets (sub_sequence = 0) ─────────────────
-    for (const { rowNum, parsed } of validRoots) {
-      // In-file duplicate root: only the first occurrence for each asset_code is valid
-      if (seenRootCodes.has(parsed.assetCode)) {
+      // In-file duplicate: same Asset Code + Sub Asset Number claimed twice
+      const key = `${parsed.assetCode}|${parsed.subSeq}`
+      if (fileKeys.has(key)) {
         errors.push({
           row: rowNum,
           field: 'Asset Code',
-          error: `Asset Code '${parsed.assetCode}' with Sub Asset Number 0 appears more than once in this file — only the first occurrence is imported`
+          error: `Asset Code '${parsed.assetCode}' with Sub Asset Number ${parsed.subSeq} appears more than once in this file (first at row ${fileKeys.get(key)})`
         })
         continue
       }
-      seenRootCodes.add(parsed.assetCode)
+      fileKeys.set(key, rowNum)
 
-      // DB duplicate check on (asset_code, sub_sequence = 0)
-      const dup = await pool.query(
-        'SELECT id FROM assets WHERE asset_code=$1 AND sub_sequence=0', [parsed.assetCode]
-      )
-      if (dup.rows.length) {
-        inFileRootMap[parsed.assetCode] = dup.rows[0].id  // register so children in this file can link
-        errors.push({ row: rowNum, field: 'Asset Code', error: `"${parsed.assetCode}" with Sub Asset Number 0 already exists — skipped` })
-        continue
-      }
+      if (parsed.subSeq === 0) validRoots.push({ rowNum, parsed })
+      else                     validChildren.push({ rowNum, parsed })
+    }
 
-      try {
-        const ins = await pool.query(INSERT_SQL, insertParams(parsed, 0, null))
-        inFileRootMap[parsed.assetCode] = ins.rows[0].id
-        inserted++
-      } catch (dbErr) {
-        errors.push({ row: rowNum, field: 'Asset Code', error: `Insert failed for "${parsed.assetCode}": ${dbErr.message}` })
+    // ── Cross-check every asset_code in the file against the DB in one query ─
+    const allValid   = [...validRoots, ...validChildren]
+    const fileCodes   = [...new Set(allValid.map(r => r.parsed.assetCode))]
+    const existingRes = fileCodes.length
+      ? await pool.query('SELECT asset_code, sub_sequence, id FROM assets WHERE asset_code = ANY($1)', [fileCodes])
+      : { rows: [] }
+
+    const existingRootIds = {}        // asset_code → id (only when a sub_sequence=0 row exists)
+    const existingKeySet   = new Set() // "assetCode|subSeq"
+    existingRes.rows.forEach(r => {
+      existingKeySet.add(`${r.asset_code}|${r.sub_sequence}`)
+      if (r.sub_sequence === 0) existingRootIds[r.asset_code] = r.id
+    })
+
+    for (const { rowNum, parsed } of allValid) {
+      const key = `${parsed.assetCode}|${parsed.subSeq}`
+      if (existingKeySet.has(key)) {
+        errors.push({
+          row: rowNum,
+          field: 'Asset Code',
+          error: `"${parsed.assetCode}" with Sub Asset Number ${parsed.subSeq} already exists in the system`
+        })
       }
     }
 
-    // ── Pass 2: child assets (sub_sequence > 0) ────────────────
+    // Root existence check for children: must exist in this file OR already in the DB
+    const fileRootCodes = new Set(validRoots.map(r => r.parsed.assetCode))
     for (const { rowNum, parsed } of validChildren) {
-      // DB duplicate check on (asset_code, sub_sequence)
-      const dup = await pool.query(
-        'SELECT id FROM assets WHERE asset_code=$1 AND sub_sequence=$2',
-        [parsed.assetCode, parsed.subSeq]
-      )
-      if (dup.rows.length) {
-        errors.push({ row: rowNum, field: 'Asset Code', error: `"${parsed.assetCode}" with Sub Asset Number ${parsed.subSeq} already exists — skipped` })
-        continue
-      }
-
-      // Resolve parent: in-file map first (covers roots inserted this run), then DB
-      let parentId = inFileRootMap[parsed.assetCode]
-      if (!parentId) {
-        const rootRes = await pool.query(
-          'SELECT id FROM assets WHERE asset_code=$1 AND sub_sequence=0', [parsed.assetCode]
-        )
-        if (rootRes.rows.length) {
-          parentId = rootRes.rows[0].id
-          inFileRootMap[parsed.assetCode] = parentId  // cache for subsequent siblings
-        }
-      }
-
-      if (!parentId) {
+      if (!fileRootCodes.has(parsed.assetCode) && !existingRootIds[parsed.assetCode]) {
         errors.push({
           row: rowNum,
           field: 'Sub Asset Number',
-          error: `Asset Code '${parsed.assetCode}' has no root record (Sub Asset Number 0) — add it first, in this file or a previous one.`
+          error: `Asset Code '${parsed.assetCode}' has no root record (Sub Asset Number 0) — add it in this file or create it first.`
         })
-        continue
-      }
-
-      try {
-        await pool.query(INSERT_SQL, insertParams(parsed, parsed.subSeq, parentId))
-        inserted++
-      } catch (dbErr) {
-        errors.push({ row: rowNum, field: 'Asset Code', error: `Insert failed for "${parsed.assetCode}" sub ${parsed.subSeq}: ${dbErr.message}` })
       }
     }
 
-    await writeAudit(req.user.id, 'Bulk Upload', 'Assets',
-      `${inserted} imported, ${errors.length} errors from ${rows.length} rows`, req.ip)
+    // ── All-or-nothing: any error anywhere blocks the entire file ─
+    if (errors.length > 0) {
+      return res.json({
+        total: rows.length,
+        valid: 0,
+        errors: errors.length,
+        errorRows: errors,
+        message: 'No rows were imported — imports are all-or-nothing. Fix the errors below and re-upload the full file.'
+      })
+    }
 
-    res.json({ total: rows.length, valid: inserted, errors: errors.length, errorRows: errors })
+    // ── Every row is clean — insert all of them in one transaction ─
+    const client = await pool.connect()
+    let inserted = 0
+    try {
+      await client.query('BEGIN')
+      const inFileRootMap = {}
+
+      for (const { parsed } of validRoots) {
+        const ins = await client.query(INSERT_SQL, insertParams(parsed, 0, null))
+        inFileRootMap[parsed.assetCode] = ins.rows[0].id
+        inserted++
+      }
+
+      for (const { parsed } of validChildren) {
+        const parentId = inFileRootMap[parsed.assetCode] || existingRootIds[parsed.assetCode]
+        await client.query(INSERT_SQL, insertParams(parsed, parsed.subSeq, parentId))
+        inserted++
+      }
+
+      await client.query('COMMIT')
+    } catch (dbErr) {
+      await client.query('ROLLBACK')
+      console.error('Bulk upload transaction rolled back:', dbErr)
+      client.release()
+      return res.status(500).json({ error: `Import failed and was fully rolled back: ${dbErr.message}` })
+    }
+    client.release()
+
+    await writeAudit(req.user.id, 'Bulk Upload', 'Assets',
+      `${inserted} imported (atomic), 0 errors from ${rows.length} rows`, req.ip)
+
+    res.json({ total: rows.length, valid: inserted, errors: 0, errorRows: [] })
   } catch (err) {
     console.error('Bulk upload error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -2415,15 +3442,16 @@ app.get('/api/reports/assets', authMiddleware, requireRole('Admin', 'Manager'), 
       ORDER BY a.created_at DESC
     `)
     res.json(r.rows)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 app.get('/api/reports/transfers', authMiddleware, requireRole('Admin', 'Manager'), async (req, res) => {
   try {
     const transfers = await pool.query(`
       SELECT
-        t.id, t.transfer_code, t.transfer_type, t.status,
-        t.notes, t.manager_email, t.expected_return_date,
+        t.id, t.transfer_code, t.challan_no, t.transfer_type, t.status,
+        t.notes, t.dept_head_email, t.manager_email, t.expected_return_date,
+        t.approval_stage, t.dept_head_approved_at,
         t.approved_at, t.approved_by_name,
         t.created_at,
         fp.name AS from_plant_name, fp.code AS from_plant_code,
@@ -2445,9 +3473,9 @@ app.get('/api/reports/transfers', authMiddleware, requireRole('Admin', 'Manager'
     const items = await pool.query(`
       SELECT
         ti.transfer_id,
-        a.asset_code AS asset_tag, a.name, a.category, a.asset_class,
-        a.serial_number AS serial, a.acquisition_value AS value,
-        a.assigned_employee,
+        a.asset_code, a.asset_code AS asset_tag, a.name, a.category, a.asset_class,
+        a.serial_number, a.serial_number AS serial, a.acquisition_value, a.acquisition_value AS value,
+        a.assigned_employee, a.sub_sequence,
         d.name AS dept_name
       FROM transfer_items ti
       JOIN assets a ON ti.asset_id = a.id
@@ -2457,8 +3485,9 @@ app.get('/api/reports/transfers', authMiddleware, requireRole('Admin', 'Manager'
 
     const returns = await pool.query(`
       SELECT
-        r.transfer_id, r.id AS return_id, r.return_code,
+        r.transfer_id, r.id AS return_id, r.return_code, r.challan_no,
         r.return_date, r.returned_by, r.notes, r.status,
+        r.dept_head_email, r.manager_email, r.approval_stage, r.dept_head_approved_at,
         r.approval_status, r.approved_at, r.approved_by_name,
         COUNT(ri.id)::int AS returned_asset_count
       FROM transfer_returns r
@@ -2467,19 +3496,29 @@ app.get('/api/reports/transfers', authMiddleware, requireRole('Admin', 'Manager'
       ORDER BY r.created_at DESC
     `)
 
+    const enrichedTransfers = await Promise.all(transfers.rows.map(async t => ({
+      ...t,
+      approved_by_name: await getTransferApprovedByName(t)
+    })))
+
+    const enrichedReturns = await Promise.all(returns.rows.map(async r => ({
+      ...r,
+      approved_by_name: await getReturnApprovedByName(r)
+    })))
+
     const itemsByTransfer   = {}
     const returnsByTransfer = {}
     items.rows.forEach(i   => { (itemsByTransfer[i.transfer_id]   ||= []).push(i) })
-    returns.rows.forEach(r => { (returnsByTransfer[r.transfer_id] ||= []).push(r) })
+    enrichedReturns.forEach(r => { (returnsByTransfer[r.transfer_id] ||= []).push(r) })
 
-    const result = transfers.rows.map(t => ({
+    const result = enrichedTransfers.map(t => ({
       ...t,
       items:   itemsByTransfer[t.id]   || [],
       returns: returnsByTransfer[t.id] || [],
     }))
 
     res.json(result)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ════════════════════════════════════════════════════════════
@@ -2496,7 +3535,7 @@ app.get('/api/audit-logs', authMiddleware, requireRole('Admin'), async (req, res
       ORDER BY l.created_at DESC LIMIT 500
     `)
     res.json(r.rows)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ════════════════════════════════════════════════════════════
@@ -2517,7 +3556,61 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
       pendingTransfers: transfers.rows[0].count,
       activePlants:     plants.rows[0].count,
     })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+})
+
+// ════════════════════════════════════════════════════════════
+// CHALLAN SETTINGS — plant-based numbering pattern + printed boilerplate
+// ════════════════════════════════════════════════════════════
+
+app.get('/api/challan-settings', authMiddleware, async (req, res) => {
+  try {
+    res.json(await getChallanSettings())
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+})
+
+// Accept only genuine embedded images (data URIs) for the signature/logo, to
+// prevent stuffing arbitrary/script URLs into the printed challan's <img src>.
+function validImageDataUri(v) {
+  if (v == null || v === '') return true                       // empty = cleared
+  if (typeof v !== 'string') return false
+  if (!/^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(v)) return false
+  if (v.length > 3_000_000) return false                       // ~2MB cap
+  return true
+}
+
+app.put('/api/challan-settings', authMiddleware, requireRole('Admin'), async (req, res) => {
+  try {
+    const {
+      delivery_doc_type, return_doc_type, seq_padding, footer_note, signatory_label,
+      template_enabled, signature_image, template,
+    } = req.body
+    if (!delivery_doc_type?.trim()) return res.status(400).json({ error: 'Delivery doc type is required' })
+    if (!return_doc_type?.trim())   return res.status(400).json({ error: 'Return doc type is required' })
+    if (!signatory_label?.trim())   return res.status(400).json({ error: 'Signatory label is required' })
+    const padding = parseInt(seq_padding)
+    if (!Number.isInteger(padding) || padding < 1 || padding > 6)
+      return res.status(400).json({ error: 'Sequence padding must be between 1 and 6' })
+    if (!validImageDataUri(signature_image))
+      return res.status(400).json({ error: 'Signature must be a PNG/JPG/GIF/WebP image under 2 MB' })
+
+    // Validate the visual-template blob: a plain object; validate any embedded logo image.
+    const tpl = (template && typeof template === 'object' && !Array.isArray(template)) ? template : {}
+    if (!validImageDataUri(tpl.logoImage))
+      return res.status(400).json({ error: 'Logo must be a PNG/JPG/GIF/WebP image under 2 MB' })
+
+    const r = await pool.query(
+      `UPDATE challan_settings
+       SET delivery_doc_type=$1, return_doc_type=$2, seq_padding=$3, footer_note=$4, signatory_label=$5,
+           template_enabled=$6, signature_image=$7, template=$8
+       WHERE id=1 RETURNING *`,
+      [delivery_doc_type.trim().toUpperCase(), return_doc_type.trim().toUpperCase(),
+       padding, stripTags(footer_note) || '', signatory_label.trim(),
+       !!template_enabled, signature_image || null, JSON.stringify(tpl)]
+    )
+    await writeAudit(req.user.id, 'Challan Settings Updated', 'System', 'Challan numbering/template settings updated', req.ip)
+    res.json(r.rows[0])
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ════════════════════════════════════════════════════════════
@@ -2533,7 +3626,7 @@ app.get('/api/role-permissions', authMiddleware, async (req, res) => {
       result[row.role][row.page] = row.access
     }
     res.json(result)
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 app.put('/api/role-permissions', authMiddleware, requireRole('Admin'), async (req, res) => {
@@ -2557,11 +3650,21 @@ app.put('/api/role-permissions', authMiddleware, requireRole('Admin'), async (re
     }
     await writeAudit(req.user.id, 'Permissions Updated', 'System', 'Role permissions updated by admin', req.ip)
     res.json({ message: 'Permissions saved successfully' })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
 // ============================================================
 
+// ── Global error handler — never leak stack traces / internal paths ──
+// Catches malformed-JSON body errors and any unhandled route errors.
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.parse.failed' || err instanceof SyntaxError))
+    return res.status(400).json({ error: 'Invalid JSON in request body' })
+  if (err && err.type === 'entity.too.large')
+    return res.status(413).json({ error: 'Request body too large' })
+  console.error('Unhandled error:', err)
+  res.status(500).json({ error: 'Internal server error' })
+})
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`)

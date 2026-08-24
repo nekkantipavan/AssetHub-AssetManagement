@@ -7,7 +7,11 @@ const formatINR = v =>
   v == null || v === '' ? '—'
   : Number(v).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
 
-const fmtDate = v => v ? new Date(v).toLocaleDateString('en-IN') : '—'
+const fmtDate = v => {
+  if (!v) return '—'
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-IN')
+}
 
 const STATUS_STYLE = {
   Active:        'bg-emerald-50 text-emerald-700',

@@ -6,12 +6,12 @@ const AuthContext = createContext(null)
 // Fallback used while DB permissions are loading (matches legacy hardcoded values)
 const DEFAULT_PERMISSIONS = {
   Manager: {
-    dashboard: 'true', assets: 'true', 'bulk-upload': 'true', transfer: 'true',
+    dashboard: 'true', assets: 'true', 'asset-requests': 'true', 'bulk-upload': 'true', transfer: 'true',
     plants: 'view', departments: 'view', masters: 'view', 'email-masters': 'false',
     reports: 'true', users: 'view', 'audit-logs': 'false',
   },
   User: {
-    dashboard: 'true', assets: 'view', 'bulk-upload': 'false', transfer: 'view',
+    dashboard: 'true', assets: 'view', 'asset-requests': 'true', 'bulk-upload': 'false', transfer: 'view',
     plants: 'false', departments: 'false', masters: 'false', 'email-masters': 'false',
     reports: 'false', users: 'false', 'audit-logs': 'false',
   },
@@ -21,6 +21,7 @@ const DEFAULT_PERMISSIONS = {
 export const PAGE_PERMISSIONS = {
   dashboard:        { Admin: true, Manager: true,   User: true   },
   assets:           { Admin: true, Manager: true,   User: 'view' },
+  'asset-requests': { Admin: true, Manager: true,   User: true   },
   'bulk-upload':    { Admin: true, Manager: true,   User: false  },
   transfer:         { Admin: true, Manager: true,   User: 'view' },
   plants:           { Admin: true, Manager: 'view', User: false  },
@@ -54,8 +55,8 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
-    const token = localStorage.getItem('ams_token')
-    const saved = localStorage.getItem('ams_user')
+    const token = localStorage.getItem('ams_token') || sessionStorage.getItem('ams_token')
+    const saved = localStorage.getItem('ams_user') || sessionStorage.getItem('ams_user')
     if (token && saved) {
       try {
         const parsed = JSON.parse(saved)
@@ -67,11 +68,17 @@ export function AuthProvider({ children }) {
     setLoading(false)
   }, [])
 
-  async function login(username, password) {
+  // remember=true persists the session across browser restarts (localStorage);
+  // remember=false keeps it only for the current tab/session (sessionStorage)
+  async function login(username, password, remember = true) {
     const res = await api.post('/auth/login', { username, password })
     const { token, user: u } = res.data
-    localStorage.setItem('ams_token', token)
-    localStorage.setItem('ams_user', JSON.stringify(u))
+    const store   = remember ? localStorage   : sessionStorage
+    const discard = remember ? sessionStorage : localStorage
+    discard.removeItem('ams_token')
+    discard.removeItem('ams_user')
+    store.setItem('ams_token', token)
+    store.setItem('ams_user', JSON.stringify(u))
     api.defaults.headers.common['Authorization'] = `Bearer ${token}`
     setUser(u)
     await refreshPermissions()
@@ -79,9 +86,13 @@ export function AuthProvider({ children }) {
   }
 
   function logout() {
+    // Best-effort server-side token invalidation (fire-and-forget)
+    api.post('/auth/logout').catch(() => {})
     localStorage.removeItem('ams_token')
     localStorage.removeItem('ams_user')
     localStorage.removeItem('ams_permissions')
+    sessionStorage.removeItem('ams_token')
+    sessionStorage.removeItem('ams_user')
     delete api.defaults.headers.common['Authorization']
     setUser(null)
     setPermissions(null)

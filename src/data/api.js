@@ -6,7 +6,7 @@ const api = axios.create({
 })
 
 api.interceptors.request.use(config => {
-  const token = localStorage.getItem('ams_token')
+  const token = localStorage.getItem('ams_token') || sessionStorage.getItem('ams_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -18,6 +18,8 @@ api.interceptors.response.use(
     if (err.response?.status === 401 && !isLoginRequest) {
       localStorage.removeItem('ams_token')
       localStorage.removeItem('ams_user')
+      sessionStorage.removeItem('ams_token')
+      sessionStorage.removeItem('ams_user')
       window.location.href = '/login'
     }
     return Promise.reject(err)
@@ -25,8 +27,9 @@ api.interceptors.response.use(
 )
 
 // ── Auth ──────────────────────────────────────────────────────
-export const loginUser = data => api.post('/auth/login', data)
-export const getMe     = ()   => api.get('/auth/me')
+export const loginUser  = data => api.post('/auth/login', data)
+export const getMe      = ()   => api.get('/auth/me')
+export const logoutUser = ()   => api.post('/auth/logout')
 
 // ── Assets ───────────────────────────────────────────────────
 export const getAssets   = ()         => api.get('/assets')
@@ -76,6 +79,14 @@ export const createReturn           = (id, data) => api.post(`/transfers/${id}/r
 export const resendReturnApproval   = id         => api.post(`/transfer-returns/${id}/resend-approval`)
 export const cancelReturn           = id         => api.delete(`/transfer-returns/${id}`)
 
+// ── Asset Requests ───────────────────────────────────────────
+export const getAssetRequests          = ()          => api.get('/asset-requests')
+export const getAssetRequest           = id          => api.get(`/asset-requests/${id}`)
+export const createAssetRequest        = data        => api.post('/asset-requests', data)
+export const assignAssetCodes          = (id, codes) => api.put(`/asset-requests/${id}/codes`, { codes })
+export const resendAssetRequestApproval= id          => api.post(`/asset-requests/${id}/resend-approval`)
+export const deleteAssetRequest        = id          => api.delete(`/asset-requests/${id}`)
+
 // ── Users ────────────────────────────────────────────────────
 export const getUsers   = ()         => api.get('/users')
 export const getUser    = id         => api.get(`/users/${id}`)
@@ -100,5 +111,9 @@ export const getAuditLogs = () => api.get('/audit-logs')
 
 // ── Dashboard ────────────────────────────────────────────────
 export const getDashboardStats = () => api.get('/dashboard/stats')
+
+// ── Challan Settings ─────────────────────────────────────────
+export const getChallanSettings    = ()     => api.get('/challan-settings')
+export const updateChallanSettings = data   => api.put('/challan-settings', data)
 
 export default api

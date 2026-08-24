@@ -54,7 +54,9 @@ export default function ForceChangePassword() {
     setError('')
 
     if (!current)           { setError('Please enter your current (temporary) password'); return }
-    if (newPw.length < 6)   { setError('New password must be at least 6 characters'); return }
+    if (newPw.length < 8 || !/[a-z]/.test(newPw) || !/[A-Z]/.test(newPw) || !/[0-9]/.test(newPw) || !/[^A-Za-z0-9]/.test(newPw)) {
+      setError('New password must be 8+ chars with upper, lower, number, and symbol'); return
+    }
     if (newPw === current)  { setError('New password must be different from your current password'); return }
     if (newPw !== confirm)  { setError('Passwords do not match'); return }
 

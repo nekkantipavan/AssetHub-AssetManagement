@@ -67,9 +67,12 @@ export default function Users() {
     return
   }
 
-  if (modal === 'add' && form.password.length < 6) {
-    setFormErr('Temporary password must be at least 6 characters')
-    return
+  if (modal === 'add') {
+    const pw = form.password
+    if (pw.length < 8 || !/[a-z]/.test(pw) || !/[A-Z]/.test(pw) || !/[0-9]/.test(pw) || !/[^A-Za-z0-9]/.test(pw)) {
+      setFormErr('Temporary password must be 8+ chars with upper, lower, number, and symbol')
+      return
+    }
   }
 
 
@@ -106,7 +109,9 @@ export default function Users() {
 }
 async function handleResetPassword() {
   setFormErr(''); setFormOk('')
-  if (newPw.length < 6) { setFormErr('Password must be at least 6 characters'); return }
+  if (newPw.length < 8 || !/[a-z]/.test(newPw) || !/[A-Z]/.test(newPw) || !/[0-9]/.test(newPw) || !/[^A-Za-z0-9]/.test(newPw)) {
+    setFormErr('Password must be 8+ chars with upper, lower, number, and symbol'); return
+  }
   setSaving(true)
   try {
     const r = await api.put(`/users/${selected.id}/reset-password`, { new_password: newPw })

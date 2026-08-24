@@ -41,7 +41,7 @@ function StatusBadge({ status }) {
 
 export default function Transfer() {
   const navigate = useNavigate()
-  const { canEdit } = useAuth()
+  const { canEdit, user } = useAuth()
   const editable = canEdit('transfer')
 
   const [data,    setData]    = useState({ transfers:[], stats:{} })
@@ -173,7 +173,11 @@ export default function Transfer() {
                     <td className="px-4 py-3 text-sm font-semibold text-ink-900 dark:text-gray-100">{t.asset_count}</td>
                     <td className="px-4 py-3"><StatusBadge status={t.status}/></td>
                     <td className="px-4 py-3 text-xs text-ink-400 dark:text-gray-400">
-                      {new Date(t.created_at).toLocaleDateString('en-IN')}
+                      {(() => {
+                        if (!t.created_at) return '—'
+                        const d = new Date(t.created_at)
+                        return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-IN')
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{t.initiated_by_name}</td>
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
@@ -182,7 +186,7 @@ export default function Transfer() {
                           className="p-1.5 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-600 text-ink-400 dark:text-gray-400 transition-colors">
                           <Eye size={14}/>
                         </button>
-                        {editable && t.status === 'Pending Approval' && (
+                        {user?.role === 'Admin' && t.status === 'Pending Approval' && (
                           <button onClick={() => handleDelete(t.id, t.transfer_code)}
                             disabled={deleting === t.id}
                             className="p-1.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500 text-ink-400 dark:text-gray-400 transition-colors">

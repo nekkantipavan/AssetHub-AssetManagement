@@ -3,8 +3,16 @@ import { Search, Download, X, FileSpreadsheet, ArrowLeftRight, ChevronDown, Chev
 import * as XLSX from 'xlsx'
 import { getTransferReport } from '../data/api'
 
-const fmtDate  = v => v ? new Date(v).toLocaleDateString('en-IN') : '—'
-const fmtDT    = v => v ? new Date(v).toLocaleString('en-IN', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'
+const fmtDate = v => {
+  if (!v) return '—'
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-IN')
+}
+const fmtDT = v => {
+  if (!v) return '—'
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleString('en-IN', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })
+}
 const formatINR = v => v == null || v === '' ? '—' : Number(v).toLocaleString('en-IN', { style:'currency', currency:'INR', maximumFractionDigits:0 })
 
 const STATUS_STYLE = {

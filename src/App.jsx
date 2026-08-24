@@ -14,6 +14,9 @@ import Transfer           from './pages/Transfer'
 import NewTransfer        from './pages/NewTransfer'
 import TransferDetail     from './pages/TransferDetail'
 import ReturnProcessing   from './pages/ReturnProcessing'
+import AssetRequests      from './pages/AssetRequests'
+import NewAssetRequest    from './pages/NewAssetRequest'
+import AssetRequestDetail from './pages/AssetRequestDetail'
 import Plants             from './pages/Plants'
 import Departments        from './pages/Departments'
 import MastersManagement  from './pages/MastersManagement'
@@ -23,6 +26,7 @@ import AuditLogs          from './pages/AuditLogs'
 import AssetReport        from './pages/AssetReport'
 import TransferReport     from './pages/TransferReport'
 import RoleManagement     from './pages/RoleManagement'
+import ChallanSettings    from './pages/ChallanSettings'
 
 // Pages that go inside the Layout (sidebar + header)
 const pages = [
@@ -30,6 +34,9 @@ const pages = [
   { path:'assets',       element:<Assets />,            page:'assets'      },
   { path:'assets/:id',  element:<AssetDetail />,       page:'assets'      },
   { path:'bulk-upload', element:<BulkUpload />,        page:'bulk-upload' },
+  { path:'asset-requests',     element:<AssetRequests />,      page:'asset-requests' },
+  { path:'asset-requests/new', element:<NewAssetRequest />,    page:'asset-requests' },
+  { path:'asset-requests/:id', element:<AssetRequestDetail />, page:'asset-requests' },
   { path:'transfer',    element:<Transfer />,          page:'transfer'    },
   { path:'transfer/new',element:<NewTransfer />,       page:'transfer'    },
   { path:'transfer/:id',element:<TransferDetail />,    page:'transfer'    },
@@ -43,6 +50,7 @@ const pages = [
   { path:'reports/assets',    element:<AssetReport />,      page:'reports'         },
   { path:'reports/transfers', element:<TransferReport />,   page:'reports'         },
   { path:'role-management',   element:<RoleManagement />,   page:'role-management' },
+  { path:'challan-settings',  element:<ChallanSettings />,  page:'challan-settings' },
 ]
 
 function PasswordGuard({ children }) {

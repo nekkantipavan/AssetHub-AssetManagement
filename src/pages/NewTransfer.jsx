@@ -26,6 +26,7 @@ export default function NewTransfer() {
   const [form, setForm] = useState({
     from_plant_id: '', to_plant_id: '',
     transfer_type: 'Returnable',
+    dept_head_email: '',
     manager_email: '',
     expected_return_date: '',
     notes: ''
@@ -99,7 +100,8 @@ export default function NewTransfer() {
     if (!form.from_plant_id)   { setStep1Err('Please select a source plant'); return }
     if (!form.to_plant_id)     { setStep1Err('Please select a destination plant'); return }
     if (form.from_plant_id === form.to_plant_id) { setStep1Err('Source and destination cannot be the same'); return }
-    if (!form.manager_email)   { setStep1Err('Please select an approval manager email'); return }
+    if (!form.dept_head_email) { setStep1Err('Please select a Department Head approver'); return }
+    if (!form.manager_email)   { setStep1Err('Please select a Manager approver'); return }
     if (form.transfer_type === 'Returnable' && !form.expected_return_date)
       { setStep1Err('Expected return date is required for Returnable transfers'); return }
     setStep(1)
@@ -123,6 +125,7 @@ export default function NewTransfer() {
         from_plant_id: parseInt(form.from_plant_id),
         to_plant_id:   parseInt(form.to_plant_id),
         transfer_type: form.transfer_type,
+        dept_head_email: form.dept_head_email,
         manager_email: form.manager_email,
         expected_return_date: form.expected_return_date || null,
         notes: form.notes || null,
@@ -219,22 +222,46 @@ export default function NewTransfer() {
                      value={form.expected_return_date} onChange={handleChange} type="date"/>
             )}
 
-            {/* Manager email for approval */}
-            <div className="col-span-2">
-              <Select label="Send Approval Email To *" name="manager_email" value={form.manager_email} onChange={handleChange}>
-                <option value="">— Select Approver —</option>
-                {emailOpts.map(e => (
-                  <option key={e.id} value={e.email}>
-                    {e.name} — {e.email}{e.department ? ` (${e.department})` : ''}
-                  </option>
-                ))}
-              </Select>
-              {emailOpts.length === 0 && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                  ⚠ No approvers configured. Go to System → Email Masters to add approver emails first.
-                </p>
-              )}
-            </div>
+            {/* Two-stage approval emails */}
+            {(() => {
+              const deptHeadOpts = emailOpts.filter(e => e.role === 'Department Head')
+              const managerOpts  = emailOpts.filter(e => e.role !== 'Department Head')
+              return (
+                <>
+                  <div>
+                    <Select label="Department Head Approval *" name="dept_head_email" value={form.dept_head_email} onChange={handleChange}>
+                      <option value="">— Select Department Head —</option>
+                      {deptHeadOpts.map(e => (
+                        <option key={e.id} value={e.email}>
+                          {e.name} — {e.email}{e.department ? ` (${e.department})` : ''}
+                        </option>
+                      ))}
+                    </Select>
+                    {deptHeadOpts.length === 0 && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                        ⚠ No Department Head approvers configured. Go to System → Email Masters to add one first.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <Select label="Manager Approval *" name="manager_email" value={form.manager_email} onChange={handleChange}>
+                      <option value="">— Select Manager —</option>
+                      {managerOpts.map(e => (
+                        <option key={e.id} value={e.email}>
+                          {e.name} — {e.email}{e.department ? ` (${e.department})` : ''}
+                        </option>
+                      ))}
+                    </Select>
+                    {managerOpts.length === 0 && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                        ⚠ No Manager approvers configured. Go to System → Email Masters to add one first.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )
+            })()}
 
             {/* Notes */}
             <div className="col-span-2">
@@ -396,7 +423,8 @@ export default function NewTransfer() {
                 ['Transfer Type',   form.transfer_type],
                 ['Total Assets',    `${selectedIds.length} asset(s)`],
                 ['Total Value',     formatINR(totalValue)],
-                ['Approval Email',  form.manager_email],
+                ['Department Head Approval', form.dept_head_email],
+                ['Manager Approval',         form.manager_email],
                 ...(form.transfer_type==='Returnable' ? [['Expected Return', form.expected_return_date ? new Date(form.expected_return_date).toLocaleDateString('en-IN') : '—']] : []),
                 ...(form.notes ? [['Notes', form.notes]] : []),
               ].map(([k,v]) => (
@@ -454,9 +482,10 @@ export default function NewTransfer() {
           <div className="bg-amber-50 dark:bg-amber-900/20 rounded-2xl px-4 py-3 text-sm text-amber-700 dark:text-amber-400 flex items-start gap-2">
             <AlertTriangle size={16} className="flex-shrink-0 mt-0.5"/>
             <span>
-              After submitting, an approval email will be sent to <strong>{form.manager_email}</strong>.
-              Assets will be marked as <strong>"Pending Transfer"</strong> until the email is approved.
-              The transfer status will automatically update when they click Approve or Reject in the email.
+              After submitting, an approval email will first be sent to <strong>{form.dept_head_email}</strong> (Department Head).
+              Once approved, a final approval email is sent to <strong>{form.manager_email}</strong> (Manager).
+              Assets will be marked as <strong>"Pending Transfer"</strong> until both approvals are complete.
+              If either approver rejects, the transfer is marked Rejected.
             </span>
           </div>
 

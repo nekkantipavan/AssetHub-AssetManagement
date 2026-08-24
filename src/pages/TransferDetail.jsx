@@ -7,7 +7,8 @@ import {
 import Button from '../components/common/Button'
 import { Badge } from '../components/common/Badge'
 import { useAuth } from '../context/AuthContext'
-import { getTransfer, completeTransfer, resendTransferApproval, resendReturnApproval, cancelReturn } from '../data/api'
+import { getTransfer, completeTransfer, resendTransferApproval, resendReturnApproval, cancelReturn, getChallanSettings } from '../data/api'
+import { buildChallanHtml } from '../utils/challanTemplate'
 
 const formatINR = v =>
   v == null || v === '' ? '—'
@@ -77,114 +78,39 @@ function Timeline({ transfer }) {
 
 // ── Print a delivery challan — works for both the original transfer
 // and for an individual return (flips bill-from/bill-to direction) ──
-function printChallan({ challanNo, date, fromName, fromLoc, toName, toLoc, transferType, items, approvedDate, label }) {
-  const fmt = v => Number(v||0).toLocaleString('en-IN', { minimumFractionDigits:2, maximumFractionDigits:2 })
-  const totalVal = items.reduce((s, a) => s + Number(a.acquisition_value||0), 0)
-  const rows = items.map((a, i) => `
-    <tr>
-      <td>${i+1}</td>
-      <td>${a.asset_code}</td>
-      <td>${a.name}</td>
-      <td>1</td>
-      <td>EA</td>
-      <td>${fmt(a.acquisition_value)}</td>
-      <td>${fmt(a.acquisition_value)}</td>
-    </tr>`).join('')
-
-  const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"/><title>${label} - ${challanNo}</title>
-<style>
-  body{font-family:Arial,sans-serif;margin:0;padding:14px;color:#111}
-  h1{text-align:center;font-size:22px;font-weight:700;padding:10px;border-bottom:2px solid #333;margin:0}
-  .challan{border:2px solid #333;max-width:900px;margin:0 auto}
-  .grid{display:grid;grid-template-columns:1fr 1fr}
-  .box{padding:10px;border-bottom:1px solid #333;min-height:100px}
-  .box:nth-child(odd){border-right:1px solid #333}
-  .box-title{font-weight:700;font-size:13px;margin-bottom:6px}
-  .box p{margin:2px 0;font-size:12px}
-  table{width:100%;border-collapse:collapse;margin-top:0}
-  th,td{border:1px solid #333;padding:7px 8px;font-size:12px;text-align:left}
-  th{background:#f0f0f0;font-weight:700}
-  .total-row td{font-weight:700}
-  .note{padding:8px;font-size:11px;border-top:1px solid #333}
-  .sign{text-align:right;padding:16px 10px;font-weight:700;font-size:13px}
-  @media print{.noprint{display:none}}
-</style></head>
-<body>
-<div class="noprint" style="margin-bottom:10px">
-  <button onclick="window.print()">🖨 Print</button>
-  <button onclick="window.close()">Close</button>
-</div>
-<div class="challan">
-  <h1>${label}</h1>
-  <div class="grid">
-    <div class="box">
-      <div class="box-title">Bill From</div>
-      <p>Location: ${fromName||'—'}</p>
-      <p>Address: ${fromLoc||'—'}</p>
-    </div>
-    <div class="box">
-      <div class="box-title">Original for Consignee</div>
-      <p>Challan No: ${challanNo}</p>
-      <p>Date of Challan: ${date}</p>
-      <p>Transfer Type: ${transferType}</p>
-      <p>Approval Date: ${approvedDate||'—'}</p>
-    </div>
-    <div class="box">
-      <div class="box-title">Details of Buyer (Bill To)</div>
-      <p>Location: ${toName||'—'}</p>
-      <p>Address: ${toLoc||'—'}</p>
-    </div>
-    <div class="box">
-      <div class="box-title">Details of Consignee (Ship To)</div>
-      <p>Location: ${toName||'—'}</p>
-      <p>Address: ${toLoc||'—'}</p>
-    </div>
-    <div class="box">
-      <div class="box-title">Transport Vehicle NO:</div>
-      <p>&nbsp;</p>
-    </div>
-    <div class="box">
-      <div class="box-title">Place of Supply:</div>
-      <p>&nbsp;</p>
-    </div>
-  </div>
-  <table>
-    <thead>
-      <tr>
-        <th>S.No</th><th>Asset No</th><th>Description</th>
-        <th>Qty</th><th>UOM</th><th>Rate (INR)</th><th>Amount (INR)</th>
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-    <tbody>
-      <tr class="total-row">
-        <td colspan="6" style="text-align:right">Total</td>
-        <td>${fmt(totalVal)}</td>
-      </tr>
-    </tbody>
-  </table>
-  <div class="note">Material transferred internally for business use only. Not intended for sale.</div>
-  <div class="sign">AUTHORISED SIGNATORY</div>
-</div>
-</body></html>`
-
+function printChallan(data) {
+  const html = buildChallanHtml(data)
   const w = window.open('', '_blank', 'width=1000,height=780')
   if (!w) { alert('Please allow popups for this site to print the challan.'); return }
   w.document.open(); w.document.write(html); w.document.close()
 }
 
-function TransferChallanButton({ transfer }) {
+// Only apply the customised template when the admin has switched it on
+// ("Set as default"). Otherwise fall back to the built-in standard challan.
+function templateOpts(settings) {
+  if (!settings?.template_enabled) return {}
+  return {
+    footerNote:     settings.footer_note,
+    signatoryLabel: settings.signatory_label,
+    signatureImage: settings.signature_image,
+    design:         settings.template || {},
+  }
+}
+
+function TransferChallanButton({ transfer, settings }) {
   function handlePrint() {
     printChallan({
-      challanNo: transfer.transfer_code,
-      date: new Date(transfer.created_at).toLocaleDateString('en-IN'),
+      challanNo: transfer.challan_no || transfer.transfer_code,
+      date: transfer.created_at ? new Date(transfer.created_at).toLocaleDateString('en-IN') : '—',
       fromName: transfer.from_plant_name, fromLoc: transfer.from_plant_location,
       toName: transfer.to_plant_name,     toLoc: transfer.to_plant_location,
       transferType: transfer.transfer_type,
       items: transfer.items || [],
       approvedDate: transfer.approved_at ? new Date(transfer.approved_at).toLocaleDateString('en-IN') : null,
-      label: 'Delivery Challan',
+      label: transfer.transfer_type === 'Returnable'
+        ? 'Returnable Delivery Challan'
+        : 'Non Returnable Delivery Challan',
+      ...templateOpts(settings),
     })
   }
   return (
@@ -194,19 +120,20 @@ function TransferChallanButton({ transfer }) {
   )
 }
 
-function ReturnChallanButton({ transfer, ret }) {
+function ReturnChallanButton({ transfer, ret, settings }) {
   function handlePrint() {
     // For returns, direction flips: bill FROM destination plant, bill TO source plant
     const items = (transfer.items || []).filter(i => ret.items.some(ri => ri.asset_id === i.asset_id))
     printChallan({
-      challanNo: ret.return_code,
-      date: new Date(ret.return_date).toLocaleDateString('en-IN'),
+      challanNo: ret.challan_no || ret.return_code,
+      date: ret.return_date ? new Date(ret.return_date).toLocaleDateString('en-IN') : '—',
       fromName: transfer.to_plant_name,   fromLoc: transfer.to_plant_location,
       toName: transfer.from_plant_name,   toLoc: transfer.from_plant_location,
       transferType: ret.status === 'Completed' ? 'Full Return' : 'Partial Return',
       items,
       approvedDate: ret.approved_at ? new Date(ret.approved_at).toLocaleDateString('en-IN') : null,
       label: 'Return Delivery Challan',
+      ...templateOpts(settings),
     })
   }
   return (
@@ -229,8 +156,10 @@ export default function TransferDetail() {
   const [resending,  setResending]  = useState(false)
   const [cancelling, setCancelling] = useState(null)
   const [activeTab,  setActiveTab]  = useState('overview')
+  const [challanSettings, setChallanSettings] = useState(null)
 
   useEffect(() => { load() }, [id])
+  useEffect(() => { getChallanSettings().then(r => setChallanSettings(r.data)).catch(() => {}) }, [])
 
   function load() {
     setLoading(true)
@@ -251,7 +180,7 @@ export default function TransferDetail() {
   }
 
   async function handleResendTransferApproval() {
-    if (!window.confirm(`Resend approval email to ${transfer.manager_email}?`)) return
+    if (!window.confirm(`Resend approval email to ${currentApproverEmail}?`)) return
     setResending(true)
     try {
       const r = await resendTransferApproval(id)
@@ -303,6 +232,10 @@ export default function TransferDetail() {
 
   const hasPendingReturn = (transfer.returns || []).some(r => r.approval_status === 'Pending Approval')
 
+  const isDeptHeadStage     = transfer.approval_stage === 'dept_head'
+  const currentApproverEmail = isDeptHeadStage ? transfer.dept_head_email : transfer.manager_email
+  const currentStageLabel    = isDeptHeadStage ? 'Awaiting Department Head approval' : 'Awaiting Manager approval (final)'
+
   return (
     <div className="space-y-5">
       {/* Back + header */}
@@ -327,13 +260,14 @@ export default function TransferDetail() {
             </div>
             <p className="text-xs text-ink-400 dark:text-gray-400 mt-0.5">
               Created {new Date(transfer.created_at).toLocaleString('en-IN')} by {transfer.initiated_by_name}
+              {transfer.challan_no && <> · Challan No: <span className="font-mono">{transfer.challan_no}</span></>}
             </p>
           </div>
         </div>
 
         {/* Action buttons */}
         <div className="flex gap-2 flex-wrap justify-end">
-          {isApproved && <TransferChallanButton transfer={transfer}/>}
+          {isApproved && <TransferChallanButton transfer={transfer} settings={challanSettings}/>}
           {canComplete && (
             <Button onClick={handleComplete} disabled={completing}>
               {completing ? 'Completing…' : <><CheckCircle size={15}/> Mark as Completed</>}
@@ -364,10 +298,10 @@ export default function TransferDetail() {
           <div className="flex items-start gap-3">
             <Clock size={18} className="text-amber-500 flex-shrink-0 mt-0.5"/>
             <div>
-              <p className="text-sm font-bold text-amber-700 dark:text-amber-400">Awaiting Email Approval</p>
+              <p className="text-sm font-bold text-amber-700 dark:text-amber-400">{currentStageLabel}</p>
               <p className="text-xs text-amber-600 dark:text-amber-500 mt-0.5">
-                Approval email sent to <strong>{transfer.manager_email}</strong>.
-                Assets are locked until the manager approves or rejects via email.
+                Approval email sent to <strong>{currentApproverEmail}</strong>.
+                Assets are locked until this approver approves or rejects via email.
               </p>
             </div>
           </div>
@@ -402,7 +336,7 @@ export default function TransferDetail() {
           { label:'From Plant',  value: transfer.from_plant_name },
           { label:'To Plant',    value: transfer.to_plant_name   },
           { label:'Total Assets',value: totalAssets              },
-          { label:'Approved By', value: transfer.approved_by_name || (transfer.status==='Pending Approval' ? 'Pending…' : '—') },
+          { label:'Approved By', value: transfer.approved_by_name || (transfer.status==='Pending Approval' ? 'Waiting for Approvals' : '—') },
         ].map(({ label, value }) => (
           <div key={label} className="bg-white dark:bg-gray-800 rounded-2xl shadow-card px-4 py-3">
             <p className="text-xs text-ink-300 dark:text-gray-400 mb-0.5">{label}</p>
@@ -504,6 +438,7 @@ export default function TransferDetail() {
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-bold text-ink-900 dark:text-gray-100">{ret.return_code}</span>
+                    {ret.challan_no && <span className="text-xs font-mono text-ink-400 dark:text-gray-400">({ret.challan_no})</span>}
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium
                       ${ret.status==='Completed'
                         ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
@@ -522,7 +457,7 @@ export default function TransferDetail() {
                       {new Date(ret.return_date).toLocaleDateString('en-IN')} · by {ret.returned_by}
                     </span>
                     {ret.approval_status === 'Approved' && (
-                      <ReturnChallanButton transfer={transfer} ret={ret}/>
+                      <ReturnChallanButton transfer={transfer} ret={ret} settings={challanSettings}/>
                     )}
                   </div>
                 </div>
