@@ -7,9 +7,9 @@ import { getChallans, uploadChallan, deleteChallan } from '../data/api'
 import { useAuth } from '../context/AuthContext'
 
 export default function ChallanRepository() {
-  const { currentUser } = useAuth()
-  const isAdmin = currentUser?.role === 'Admin'
-  const isManagerOrAdmin = currentUser?.role === 'Admin' || currentUser?.role === 'Manager'
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'Admin'
+  const isManagerOrAdmin = user?.role === 'Admin' || user?.role === 'Manager'
 
   const [documents, setDocuments] = useState([])
   const [months, setMonths] = useState([])
