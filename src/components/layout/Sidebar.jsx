@@ -11,7 +11,6 @@ const allNavItems = [
   { label:'Dashboard',      icon:LayoutDashboard, path:'/dashboard',      page:'dashboard'      },
   { label:'Assets',         icon:Box,             path:'/assets',         page:'assets'         },
   { label:'Asset Requests', icon:ClipboardList,   path:'/asset-requests', page:'asset-requests' },
-  { label:'Challan Vault',  icon:FolderArchive,   path:'/challans',       page:'transfer'       },
   { label:'Bulk Upload',    icon:Upload,          path:'/bulk-upload',    page:'bulk-upload'    },
 ]
 
@@ -28,10 +27,11 @@ const allReportItems = [
 ]
 
 const allSystemItems = [
-  { label:'Users',            icon:Users,       path:'/users',            page:'users'            },
-  { label:'Audit Logs',       icon:ScrollText,  path:'/audit-logs',       page:'audit-logs'       },
-  { label:'Role Management',  icon:ShieldCheck, path:'/role-management',  page:'role-management'  },
-  { label:'Challan Settings', icon:Receipt,     path:'/challan-settings', page:'challan-settings' },
+  { label:'Users',            icon:Users,         path:'/users',            page:'users'            },
+  { label:'Audit Logs',       icon:ScrollText,    path:'/audit-logs',       page:'audit-logs'       },
+  { label:'Role Management',  icon:ShieldCheck,   path:'/role-management',  page:'role-management'  },
+  { label:'Challan Settings', icon:Receipt,       path:'/challan-settings', page:'challan-settings' },
+  { label:'Challan Vault',    icon:FolderArchive, path:'/challans',         page:'transfer'         },
 ]
 
 const roleColors = {
