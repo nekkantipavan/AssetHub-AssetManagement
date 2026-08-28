@@ -1,0 +1,42 @@
+name: Deploy to Production (192.168.24.15)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to IIS Production Server
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout Repository Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Server Dependencies
+        run: |
+          cd server
+          npm install --production=false
+
+      - name: Run Database Migrations
+        run: |
+          cd server
+          node -e "const pool = require('./db'); const fs = require('fs'); const sql = fs.readFileSync('./migrations/010_create_challan_documents.sql', 'utf8'); pool.query(sql).then(() => { console.log('✓ Migration 010 complete'); process.exit(0); }).catch(e => { console.error(e); process.exit(1); });"
+
+      - name: Build Frontend Production Assets
+        run: |
+          npm install
+          npm run build
+
+      - name: Restart IIS Web Services
+        powershell: |
+          Import-Module WebAdministration
+          # Restart Application Pools / Sites in IIS
+          Get-ChildItem IIS:\AppPools | ForEach-Object { Restart-WebAppPool $_.name }
+          Write-Host "✓ IIS Application Pools restarted successfully."
