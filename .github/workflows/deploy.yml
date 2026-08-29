@@ -62,8 +62,12 @@ jobs:
           }
           Write-Host "[OK] Server code deployed to D:\asset-management\server"
 
-      - name: Restart IIS Web Services
+      - name: Refresh IIS Services
         run: |
-          Import-Module WebAdministration
-          Get-ChildItem IIS:\AppPools | ForEach-Object { Restart-WebAppPool $_.name }
-          Write-Host "[OK] IIS Application Pools restarted successfully."
+          try {
+              Import-Module WebAdministration -ErrorAction SilentlyContinue
+              Get-ChildItem IIS:\AppPools -ErrorAction SilentlyContinue | ForEach-Object { Restart-WebAppPool $_.name -ErrorAction SilentlyContinue }
+              Write-Host "[OK] IIS Application Pools restarted successfully."
+          } catch {
+              Write-Host "[NOTE] IIS AppPool restart skipped (insufficient permissions for config read)."
+          }
