@@ -9,6 +9,8 @@ import { getNotifications, markAllNotificationsRead, markNotificationRead } from
 const pageTitles = {
   '/dashboard':          { title:'Dashboard',       sub:'Welcome back'                },
   '/assets':             { title:'Assets',          sub:'Manage all your assets'      },
+  '/asset-requests':     { title:'Asset Requests',  sub:'Request New Asset'           },
+  '/asset-requests/new': { title:'Asset Requests',  sub:'Request New Asset'           },
   '/bulk-upload':        { title:'Bulk Upload',     sub:'Import assets from Excel/CSV'},
   '/transfer':           { title:'Transfers',       sub:'Move assets between plants'  },
   '/plants':             { title:'Plants',          sub:'Manage plant locations'      },
@@ -18,6 +20,7 @@ const pageTitles = {
   '/reports/assets':     { title:'Asset Report',      sub:'Asset inventory report'      },
   '/reports/transfers':  { title:'Transfer Report',   sub:'Transfer records report'     },
   '/role-management':    { title:'Role Management',   sub:'Configure role permissions'  },
+  '/challans':           { title:'Challan Vault',   sub:'Document Repository'         },
 }
 
 const roleColors = {
@@ -171,10 +174,11 @@ export default function Header() {
   const unreadCount = notifications.filter(n => !n.is_read).length
 
   const page = pageTitles[pathname]
-    || (pathname.startsWith('/assets/')   ? { title:'Assets',    sub:'Asset Detail'    } : null)
-    || (pathname.endsWith('/return')      ? { title:'Transfers', sub:'Process Return'  } : null)
-    || (pathname.startsWith('/transfer/') ? { title:'Transfers', sub:'Transfer Detail' } : null)
-    || { title:'AssetHub', sub:'' }
+    || (pathname.startsWith('/assets/')         ? { title:'Assets',         sub:'Asset Detail'     } : null)
+    || (pathname.startsWith('/asset-requests/')   ? { title:'Asset Requests',   sub:'Request New Asset'} : null)
+    || (pathname.endsWith('/return')            ? { title:'Transfers',      sub:'Process Return'   } : null)
+    || (pathname.startsWith('/transfer/')       ? { title:'Transfers',      sub:'Transfer Detail'  } : null)
+    || { title:'Asset Requests', sub:'Request New Asset' }
   const initials = user?.name?.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase() || '?'
 
   function handleLogout() { logout(); navigate('/login') }
@@ -184,7 +188,7 @@ export default function Header() {
       <header className="bg-white dark:bg-gray-800 border-b border-cream-200 dark:border-gray-700 px-6 py-3 flex items-center justify-between flex-shrink-0 relative z-20">
         <div>
           <h1 className="text-base font-bold dark:text-white leading-none">{page.title}</h1>
-          <p className="text-xs text-ink-300 dark:text-gray-400 mt-0.5">{page.sub}, {user?.name?.split(' ')[0]}</p>
+          <p className="text-xs text-ink-300 dark:text-gray-400 mt-0.5">{page.sub || `Welcome, ${user?.name?.split(' ')[0]}`}</p>
         </div>
 
         <div className="flex items-center gap-3">

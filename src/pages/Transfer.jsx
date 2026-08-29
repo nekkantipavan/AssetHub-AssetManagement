@@ -5,6 +5,7 @@ import {
   XCircle, AlertCircle, Truck, RotateCcw, Eye
 } from 'lucide-react'
 import Button from '../components/common/Button'
+import Pagination from '../components/common/Pagination'
 import { Badge } from '../components/common/Badge'
 import { useAuth } from '../context/AuthContext'
 import { getTransfers, deleteTransfer } from '../data/api'
@@ -49,8 +50,11 @@ export default function Transfer() {
   const [search,  setSearch]  = useState('')
   const [filter,  setFilter]  = useState('All')
   const [deleting, setDeleting] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize]       = useState(25)
 
   useEffect(() => { load() }, [])
+  useEffect(() => { setCurrentPage(1) }, [search, filter])
 
   function load() {
     setLoading(true)
@@ -71,6 +75,8 @@ export default function Transfer() {
     const matchF = filter === 'All' || t.status === filter
     return matchQ && matchF
   })
+
+  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   async function handleDelete(id, code) {
     if (!window.confirm(`Delete transfer ${code}? This will restore all assets.`)) return
@@ -154,7 +160,7 @@ export default function Transfer() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(t => (
+                {paginated.map(t => (
                   <tr key={t.id} className="border-b border-cream-200 dark:border-gray-700 hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors cursor-pointer"
                     onClick={() => navigate(`/transfer/${t.id}`)}>
                     <td className="px-4 py-3">
@@ -208,6 +214,14 @@ export default function Transfer() {
           </div>
         )}
       </div>
+
+      <Pagination
+        totalItems={filtered.length}
+        currentPage={currentPage}
+        pageSize={pageSize}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={sz => { setPageSize(sz); setCurrentPage(1) }}
+      />
     </div>
   )
 }

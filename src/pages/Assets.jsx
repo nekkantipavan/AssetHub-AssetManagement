@@ -4,6 +4,7 @@ import { Search, Plus, Eye, Edit2, Trash2, Box, X } from 'lucide-react'
 import { Badge } from '../components/common/Badge'
 import Button from '../components/common/Button'
 import Modal from '../components/common/Modal'
+import Pagination from '../components/common/Pagination'
 import { Input, Select } from '../components/common/FormFields'
 import { useAuth } from '../context/AuthContext'
 import { getAssets, createAsset, updateAsset, deleteAsset, getPlants, getDepartments, getUsers, getAssetMastersAll } from '../data/api'
@@ -44,6 +45,8 @@ export default function Assets() {
   const [filterStatus, setFilterStatus] = useState('All')
   const [filterDept,   setFilterDept]   = useState('All')
   const [filterCat,    setFilterCat]    = useState('All')
+  const [currentPage,  setCurrentPage]  = useState(1)
+  const [pageSize,     setPageSize]     = useState(25)
 
   // Modals
   const [modalType, setModalType] = useState(null)
@@ -51,6 +54,8 @@ export default function Assets() {
   const [form,      setForm]      = useState(EMPTY_FORM)
   const [saving,    setSaving]    = useState(false)
   const [formError, setFormError] = useState('')
+
+  useEffect(() => { setCurrentPage(1) }, [search, filterStatus, filterDept, filterCat])
 
   useEffect(() => {
     Promise.all([getAssets(), getPlants(), getDepartments(), getUsers(), getAssetMastersAll()])
@@ -94,6 +99,10 @@ export default function Assets() {
       (filterDept   === 'All' || a.dept_name === filterDept) &&
       (filterCat    === 'All' || a.category  === filterCat)
   }), [assets, search, filterStatus, filterDept, filterCat])
+
+  const paginated = useMemo(() => {
+    return filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  }, [filtered, currentPage, pageSize])
 
   // ── Modal helpers ────────────────────────────────────────────
   function openAdd() { setForm(EMPTY_FORM); setFormError(''); setModalType('add') }
@@ -278,7 +287,7 @@ export default function Assets() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(a => (
+              {paginated.map(a => (
                 <tr key={a.id} className="border-b border-cream-200 dark:border-gray-700 hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors cursor-pointer"
                   onClick={() => navigate(`/assets/${a.id}`)}>
                   <td className="px-4 py-3"><span className="text-brand-600 font-semibold text-xs">{a.asset_code}</span></td>
@@ -313,6 +322,14 @@ export default function Assets() {
           </div>
         )}
       </div>
+
+      <Pagination
+        totalItems={filtered.length}
+        currentPage={currentPage}
+        pageSize={pageSize}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={sz => { setPageSize(sz); setCurrentPage(1) }}
+      />
 
       {/* ── Add / Edit Modal ───────────────────────────────────── */}
       <Modal isOpen={modalType==='add'||modalType==='edit'} onClose={closeModal}

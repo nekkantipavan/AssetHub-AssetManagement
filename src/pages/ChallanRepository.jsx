@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { getChallans, uploadChallan, deleteChallan } from '../data/api'
 import { useAuth } from '../context/AuthContext'
+import Pagination from '../components/common/Pagination'
 
 export default function ChallanRepository() {
   const { user } = useAuth()
@@ -17,6 +18,10 @@ export default function ChallanRepository() {
   const [selectedMonth, setSelectedMonth] = useState('')
   const [selectedType, setSelectedType] = useState('')
   const [search, setSearch] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize]       = useState(25)
+
+  useEffect(() => { setCurrentPage(1) }, [selectedMonth, selectedType, search])
 
   // Upload modal state
   const [showUploadModal, setShowUploadModal] = useState(false)
@@ -278,7 +283,7 @@ export default function ChallanRepository() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-100 dark:divide-gray-700/60 text-sm">
-                {documents.map(doc => (
+                {documents.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(doc => (
                   <tr key={doc.id} className="hover:bg-ink-50/50 dark:hover:bg-gray-750 transition-colors">
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-3">
@@ -366,6 +371,14 @@ export default function ChallanRepository() {
           </div>
         )}
       </div>
+
+      <Pagination
+        totalItems={documents.length}
+        currentPage={currentPage}
+        pageSize={pageSize}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={sz => { setPageSize(sz); setCurrentPage(1) }}
+      />
 
       {/* Upload Modal */}
       {showUploadModal && (

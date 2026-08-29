@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Search, Download, ChevronDown, ChevronRight, User, Clock, Globe, Tag, ArrowRight } from 'lucide-react'
 import Button from '../components/common/Button'
+import Pagination from '../components/common/Pagination'
 import { getAuditLogs } from '../data/api'
 
 const MODULES = ['All', 'Assets', 'Transfer', 'Users', 'Masters']
@@ -219,12 +220,16 @@ export default function AuditLogs() {
   const [search, setSearch]       = useState('')
   const [module, setModule]       = useState('All')
   const [dateFrom, setDateFrom]   = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize]       = useState(25)
 
   useEffect(() => {
     getAuditLogs()
       .then(res => { setAuditLogs(res.data); setLoading(false) })
       .catch(() => setLoading(false))
   }, [])
+
+  useEffect(() => { setCurrentPage(1) }, [search, module, dateFrom])
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
@@ -238,6 +243,10 @@ export default function AuditLogs() {
       return matchModule && matchSearch && matchDate
     })
   }, [auditLogs, search, module, dateFrom])
+
+  const paginated = useMemo(() => {
+    return filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  }, [filtered, currentPage, pageSize])
 
   function handleExport() {
     const csv = [
@@ -336,7 +345,7 @@ export default function AuditLogs() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(l => <LogRow key={l.id} log={l} />)}
+              {paginated.map(l => <LogRow key={l.id} log={l} />)}
             </tbody>
           </table>
         </div>
@@ -345,6 +354,14 @@ export default function AuditLogs() {
           <div className="py-16 text-center text-ink-300 text-sm">No logs match your filters</div>
         )}
       </div>
+
+      <Pagination
+        totalItems={filtered.length}
+        currentPage={currentPage}
+        pageSize={pageSize}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={sz => { setPageSize(sz); setCurrentPage(1) }}
+      />
     </div>
   )
 }

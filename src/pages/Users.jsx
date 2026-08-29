@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Plus, Edit2, Shield, KeyRound, X, CheckCircle, Eye, EyeOff } from 'lucide-react'
 import Button from '../components/common/Button'
 import Modal from '../components/common/Modal'
+import Pagination from '../components/common/Pagination'
 import { Table, Thead, Th, Tbody, Tr, Td } from '../components/common/Table'
 import { Badge, DotBadge } from '../components/common/Badge'
 import { Input, Select } from '../components/common/FormFields'
@@ -19,6 +20,11 @@ export default function Users() {
   const [users,   setUsers]   = useState([])
   const [loading, setLoading] = useState(true)
   const [filter,  setFilter]  = useState('All')
+
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize]       = useState(25)
+
+  useEffect(() => { setCurrentPage(1) }, [filter])
 
   // Add/Edit modal
   const [modal,    setModal]   = useState(null) // 'add'|'edit'|'resetpw'
@@ -39,6 +45,7 @@ export default function Users() {
   }, [])
 
   const filtered = users.filter(u => filter === 'All' || u.role === filter)
+  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   function openAdd()  { setForm(EMPTY_FORM); setFormErr(''); setFormOk(''); setModal('add') }
   function openEdit(u){
@@ -172,7 +179,7 @@ async function handleResetPassword() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(u => (
+              {paginated.map(u => (
                 <tr key={u.id} className="border-b border-cream-200 hover:bg-cream-50 transition-colors">
                   <td className="px-4 py-3 text-sm text-ink-400">#{u.id}</td>
                   <td className="px-4 py-3 text-sm font-semibold text-brand-600">{u.employee_id||'—'}</td>
@@ -212,6 +219,14 @@ async function handleResetPassword() {
         </div>
         {filtered.length === 0 && <div className="py-12 text-center text-ink-300 dark:text-gray-400 text-sm">No users found</div>}
       </div>
+
+      <Pagination
+        totalItems={filtered.length}
+        currentPage={currentPage}
+        pageSize={pageSize}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={sz => { setPageSize(sz); setCurrentPage(1) }}
+      />
 
       {/* ── Add / Edit User Modal ─────────────────────────── */}
       <Modal isOpen={modal==='add'||modal==='edit'} onClose={close} title={modal==='add'?'Add New User':'Edit User'}>

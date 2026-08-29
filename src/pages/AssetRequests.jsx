@@ -5,6 +5,7 @@ import {
   ClipboardList, Hash, UserCheck, Eye
 } from 'lucide-react'
 import Button from '../components/common/Button'
+import Pagination from '../components/common/Pagination'
 import { useAuth } from '../context/AuthContext'
 import { getAssetRequests, deleteAssetRequest } from '../data/api'
 
@@ -77,8 +78,11 @@ export default function AssetRequests() {
   const [search,   setSearch]   = useState('')
   const [filter,   setFilter]   = useState('All')
   const [deleting, setDeleting] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
 
   useEffect(() => { load() }, [])
+  useEffect(() => { setCurrentPage(1) }, [search, filter])
 
   function load() {
     setLoading(true)
@@ -97,6 +101,8 @@ export default function AssetRequests() {
     const matchF = filter === 'All' || r.status === filter
     return matchQ && matchF
   })
+
+  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   async function handleDelete(e, id, code) {
     e.stopPropagation()
@@ -157,7 +163,7 @@ export default function AssetRequests() {
         </div>
         {canCreate && (
           <Button onClick={() => navigate('/asset-requests/new')}>
-            <Plus size={15}/> New Request
+            <Plus size={15}/> Request New Asset
           </Button>
         )}
       </div>
@@ -182,7 +188,7 @@ export default function AssetRequests() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(r => (
+                {paginated.map(r => (
                   <tr key={r.id} className="border-b border-cream-200 dark:border-gray-700 hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors cursor-pointer"
                     onClick={() => navigate(`/asset-requests/${r.id}`)}>
                     <td className="px-4 py-3"><span className="text-brand-600 font-semibold text-xs">{r.request_code}</span></td>
@@ -223,6 +229,14 @@ export default function AssetRequests() {
           </div>
         )}
       </div>
+
+      <Pagination
+        totalItems={filtered.length}
+        currentPage={currentPage}
+        pageSize={pageSize}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={sz => { setPageSize(sz); setCurrentPage(1) }}
+      />
     </div>
   )
 }

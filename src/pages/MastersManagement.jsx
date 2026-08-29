@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Plus, Edit2, Trash2, X, CheckCircle, Tag, Layers, Activity, Circle, Building2, Landmark } from 'lucide-react'
 import Button from '../components/common/Button'
 import Modal from '../components/common/Modal'
+import Pagination from '../components/common/Pagination'
 import { Input } from '../components/common/FormFields'
 import { useAuth } from '../context/AuthContext'
 import { getAssetMastersAll, createAssetMaster, updateAssetMaster, deleteAssetMaster } from '../data/api'
@@ -23,6 +24,11 @@ export default function MastersManagement() {
   const [data,    setData]    = useState({}) // { category: [...], asset_class: [...], ... }
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('category')
+
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize]       = useState(25)
+
+  useEffect(() => { setCurrentPage(1) }, [activeTab])
 
   // Modal state
   const [modal,    setModal]    = useState(null) // 'add' | 'edit' | 'delete'
@@ -148,13 +154,13 @@ export default function MastersManagement() {
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {currentItems.map((item, idx) => (
+              {currentItems.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((item, idx) => (
                 <div
                   key={item.id}
                   className="flex items-center justify-between bg-cream-100 dark:bg-gray-700 rounded-2xl px-4 py-3 group"
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-xs text-ink-300 dark:text-gray-500 font-mono w-5 flex-shrink-0">{idx+1}</span>
+                    <span className="text-xs text-ink-300 dark:text-gray-500 font-mono w-5 flex-shrink-0">{(currentPage - 1) * pageSize + idx + 1}</span>
                     {activeTab === 'cost_center' ? (
                       <div className="min-w-0">
                         <div className="text-sm font-medium text-ink-800 dark:text-gray-200 truncate">{item.value}</div>
@@ -182,6 +188,14 @@ export default function MastersManagement() {
           )}
         </div>
       </div>
+
+      <Pagination
+        totalItems={currentItems.length}
+        currentPage={currentPage}
+        pageSize={pageSize}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={sz => { setPageSize(sz); setCurrentPage(1) }}
+      />
 
       {/* ── Add / Edit Modal ─────────────────────────────────── */}
       <Modal isOpen={modal==='add'||modal==='edit'} onClose={close}

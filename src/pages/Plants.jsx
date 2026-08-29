@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Plus, Edit2, Trash2, MapPin, X } from 'lucide-react'
 import Button from '../components/common/Button'
 import Modal from '../components/common/Modal'
+import Pagination from '../components/common/Pagination'
 import { Badge } from '../components/common/Badge'
 import { Input, Select } from '../components/common/FormFields'
 import { useAuth } from '../context/AuthContext'
@@ -22,11 +23,16 @@ export default function Plants() {
   const [saving,  setSaving]  = useState(false)
   const [formErr, setFormErr] = useState('')
 
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize]       = useState(25)
+
   useEffect(() => {
     getPlants()
       .then(r => { setPlants(r.data); setLoading(false) })
       .catch(e => { setError(e.message); setLoading(false) })
   }, [])
+
+  const paginated = plants.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   function openAdd()       { setForm(EMPTY); setFormErr(''); setModal('add') }
   function openEdit(p)     { setSelected(p); setForm({ code:p.code, name:p.name, location:p.location||'', head:p.head||'', status:p.status, challan_prefix:p.challan_prefix||'' }); setFormErr(''); setModal('edit') }
@@ -102,7 +108,7 @@ export default function Plants() {
               </tr>
             </thead>
             <tbody>
-              {plants.map(p => (
+              {paginated.map(p => (
                 <tr key={p.id} className="border-b border-cream-200 hover:bg-cream-50 transition-colors">
                   <td className="px-4 py-3 text-sm text-ink-400">#{p.id}</td>
                   <td className="px-4 py-3">
@@ -146,6 +152,14 @@ export default function Plants() {
         </div>
         {plants.length === 0 && <div className="py-12 text-center text-ink-300 dark:text-gray-400 text-sm">No plants found</div>}
       </div>
+
+      <Pagination
+        totalItems={plants.length}
+        currentPage={currentPage}
+        pageSize={pageSize}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={sz => { setPageSize(sz); setCurrentPage(1) }}
+      />
 
       {/* Add / Edit Modal */}
       <Modal isOpen={modal === 'add' || modal === 'edit'} onClose={close} title={modal === 'add' ? 'Add New Plant' : 'Edit Plant'}>
