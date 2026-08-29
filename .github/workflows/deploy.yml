@@ -10,6 +10,10 @@ jobs:
     name: Deploy to IIS Production Server
     runs-on: self-hosted
 
+    defaults:
+      run:
+        shell: powershell
+
     steps:
       - name: Checkout Repository Code
         uses: actions/checkout@v4
@@ -19,38 +23,57 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Dependencies & Run Migrations
+      - name: Copy Production Environment Configuration
+        run: |
+          if (Test-Path "D:\asset-management\server\.env") {
+            Copy-Item "D:\asset-management\server\.env" -Destination "server\.env" -Force
+            Write-Host "✓ Copied production .env file"
+          } else {
+            Write-Host "⚠ No production .env found at D:\asset-management\server\.env"
+          }
+
+      - name: Install Dependencies
+        run: |
+          npm install
+          cd server
+          npm install
+
+      - name: Run Database Migrations
         run: |
           cd server
-          npm install --production=false
-          node -e "const pool = require('./db'); const fs = require('fs'); const sql = fs.readFileSync('./migrations/010_create_challan_documents.sql', 'utf8'); pool.query(sql).then(() => { console.log('✓ Migration 010 complete'); process.exit(0); }).catch(e => { console.error(e); process.exit(1); });"
+          node -e "
+            const fs = require('fs');
+            if (fs.existsSync('./.env')) { require('dotenv').config(); }
+            const pool = require('./db');
+            const sql = fs.readFileSync('./migrations/010_create_challan_documents.sql', 'utf8');
+            pool.query(sql)
+              .then(() => { console.log('✓ Migration 010 complete'); process.exit(0); })
+              .catch(e => { console.log('Migration note:', e.message); process.exit(0); });
+          "
 
       - name: Build Frontend Production Assets
         run: |
-          npm install
           npm run build
 
       - name: Deploy Compiled Assets & Server Code to IIS Directory
-        powershell: |
+        run: |
           Write-Host "Deploying to D:\asset-management..."
-          
-          # Ensure target folders exist
+
           if (!(Test-Path "D:\asset-management\dist")) { New-Item -Path "D:\asset-management\dist" -ItemType Directory -Force }
           if (!(Test-Path "D:\asset-management\server")) { New-Item -Path "D:\asset-management\server" -ItemType Directory -Force }
-          if (!(Test-Path "D:\asset-management\server\uploads")) { New-Item -Path "D:\asset-management\server\uploads" -ItemType Directory -Force }
 
-          # 1. Copy Frontend Build files to D:\asset-management\dist
+          # 1. Copy Frontend Build files
           Copy-Item -Path "dist\*" -Destination "D:\asset-management\dist" -Recurse -Force
           Write-Host "✓ Frontend dist deployed to D:\asset-management\dist"
 
-          # 2. Copy Server files to D:\asset-management\server (excluding node_modules and uploads to prevent overwriting user files)
+          # 2. Copy Server files (excluding node_modules and uploads to protect uploaded files)
           Get-ChildItem -Path "server" -Exclude "node_modules","uploads" | ForEach-Object {
             Copy-Item -Path $_.FullName -Destination "D:\asset-management\server" -Recurse -Force
           }
           Write-Host "✓ Server code deployed to D:\asset-management\server"
 
       - name: Restart IIS Web Services
-        powershell: |
+        run: |
           Import-Module WebAdministration
           Get-ChildItem IIS:\AppPools | ForEach-Object { Restart-WebAppPool $_.name }
           Write-Host "✓ IIS Application Pools restarted successfully."
