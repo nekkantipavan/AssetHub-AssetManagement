@@ -26,30 +26,22 @@ jobs:
       - name: Copy Production Environment Configuration
         run: |
           if (Test-Path "D:\asset-management\server\.env") {
-            Copy-Item "D:\asset-management\server\.env" -Destination "server\.env" -Force
-            Write-Host "✓ Copied production .env file"
+              Copy-Item "D:\asset-management\server\.env" -Destination "server\.env" -Force
+              Write-Host "[OK] Copied production .env file"
           } else {
-            Write-Host "⚠ No production .env found at D:\asset-management\server\.env"
+              Write-Host "[WARN] No production .env found at D:\asset-management\server\.env"
           }
 
       - name: Install Dependencies
         run: |
           npm install
-          cd server
+          Set-Location server
           npm install
 
       - name: Run Database Migrations
         run: |
-          cd server
-          node -e "
-            const fs = require('fs');
-            if (fs.existsSync('./.env')) { require('dotenv').config(); }
-            const pool = require('./db');
-            const sql = fs.readFileSync('./migrations/010_create_challan_documents.sql', 'utf8');
-            pool.query(sql)
-              .then(() => { console.log('✓ Migration 010 complete'); process.exit(0); })
-              .catch(e => { console.log('Migration note:', e.message); process.exit(0); });
-          "
+          Set-Location server
+          node -e "const fs = require('fs'); if (fs.existsSync('./.env')) { require('dotenv').config(); } const pool = require('./db'); const sql = fs.readFileSync('./migrations/010_create_challan_documents.sql', 'utf8'); pool.query(sql).then(() => { console.log('[OK] Migration 010 complete'); process.exit(0); }).catch(e => { console.log('Migration status:', e.message); process.exit(0); });"
 
       - name: Build Frontend Production Assets
         run: |
@@ -59,21 +51,19 @@ jobs:
         run: |
           Write-Host "Deploying to D:\asset-management..."
 
-          if (!(Test-Path "D:\asset-management\dist")) { New-Item -Path "D:\asset-management\dist" -ItemType Directory -Force }
-          if (!(Test-Path "D:\asset-management\server")) { New-Item -Path "D:\asset-management\server" -ItemType Directory -Force }
+          if (-not (Test-Path "D:\asset-management\dist")) { New-Item -Path "D:\asset-management\dist" -ItemType Directory -Force }
+          if (-not (Test-Path "D:\asset-management\server")) { New-Item -Path "D:\asset-management\server" -ItemType Directory -Force }
 
-          # 1. Copy Frontend Build files
           Copy-Item -Path "dist\*" -Destination "D:\asset-management\dist" -Recurse -Force
-          Write-Host "✓ Frontend dist deployed to D:\asset-management\dist"
+          Write-Host "[OK] Frontend dist deployed to D:\asset-management\dist"
 
-          # 2. Copy Server files (excluding node_modules and uploads to protect uploaded files)
           Get-ChildItem -Path "server" -Exclude "node_modules","uploads" | ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination "D:\asset-management\server" -Recurse -Force
+              Copy-Item -Path $_.FullName -Destination "D:\asset-management\server" -Recurse -Force
           }
-          Write-Host "✓ Server code deployed to D:\asset-management\server"
+          Write-Host "[OK] Server code deployed to D:\asset-management\server"
 
       - name: Restart IIS Web Services
         run: |
           Import-Module WebAdministration
           Get-ChildItem IIS:\AppPools | ForEach-Object { Restart-WebAppPool $_.name }
-          Write-Host "✓ IIS Application Pools restarted successfully."
+          Write-Host "[OK] IIS Application Pools restarted successfully."
