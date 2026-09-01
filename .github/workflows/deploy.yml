@@ -72,11 +72,33 @@ jobs:
               Write-Host "[NOTE] IIS AppPool restart skipped (insufficient permissions for config read)."
           }
 
-      - name: Restart Backend Service (PM2)
+      - name: Restart Backend Service (PM2 / Node Reload)
         run: |
+          # 1. Try global pm2
           try {
-              pm2 restart all
-              Write-Host "[OK] PM2 backend service restarted successfully."
+              & pm2 restart all
+              Write-Host "[OK] PM2 restart all completed."
           } catch {
-              Write-Host "[NOTE] PM2 restart command skipped."
+              Write-Host "[NOTE] Direct pm2 invocation: $_"
+          }
+
+          # 2. Try AppData pm2.cmd path
+          try {
+              $pm2Cmd = "$env:APPDATA\npm\pm2.cmd"
+              if (Test-Path $pm2Cmd) {
+                  & $pm2Cmd restart all
+                  Write-Host "[OK] PM2 restarted via AppData path."
+              }
+          } catch {
+              Write-Host "[NOTE] AppData pm2 invocation: $_"
+          }
+
+          # 3. Kill running server node processes to force PM2/daemon instant respawn with new code
+          try {
+              Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { $_.CommandLine -like "*asset-management\server*" -or $_.CommandLine -like "*server\index.js*" } | ForEach-Object {
+                  Stop-Process -Id $_.ProcessId -Force
+                  Write-Host "[OK] Reloaded server process PID $($_.ProcessId)."
+              }
+          } catch {
+              Write-Host "[NOTE] Process reload check: $_"
           }

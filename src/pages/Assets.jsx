@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Search, Plus, Eye, Edit2, Trash2, Box, X } from 'lucide-react'
 import { Badge } from '../components/common/Badge'
@@ -32,11 +32,12 @@ export default function Assets() {
   const navigate  = useNavigate()
   const location  = useLocation()
 
-  // Server-paginated data
-  const [assets,     setAssets]     = useState([])
-  const [totalItems, setTotalItems] = useState(0)
-  const [loading,    setLoading]    = useState(true)
-  const [error,      setError]      = useState(null)
+  // State
+  const [allClientAssets, setAllClientAssets] = useState(null) // Non-null if backend returned bare array
+  const [serverAssets,    setServerAssets]    = useState([])
+  const [serverTotal,     setServerTotal]     = useState(0)
+  const [loading,         setLoading]         = useState(true)
+  const [error,           setError]           = useState(null)
 
   // Lookup data (loaded once)
   const [plants,    setPlants]    = useState([])
@@ -46,13 +47,13 @@ export default function Assets() {
   const [filterOptions, setFilterOptions] = useState({ departments: [], categories: [] })
 
   // Filters & pagination
-  const [search,       setSearch]       = useState('')
+  const [search,          setSearch]          = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [filterStatus, setFilterStatus] = useState('All')
-  const [filterDept,   setFilterDept]   = useState('All')
-  const [filterCat,    setFilterCat]    = useState('All')
-  const [currentPage,  setCurrentPage]  = useState(1)
-  const [pageSize,     setPageSize]     = useState(25)
+  const [filterStatus,    setFilterStatus]    = useState('All')
+  const [filterDept,      setFilterDept]      = useState('All')
+  const [filterCat,       setFilterCat]       = useState('All')
+  const [currentPage,     setCurrentPage]     = useState(1)
+  const [pageSize,        setPageSize]        = useState(25)
 
   // Modals
   const [modalType, setModalType] = useState(null)
@@ -98,7 +99,7 @@ export default function Assets() {
       .catch(console.error)
   }, [])
 
-  // Fetch assets from server whenever filters/page change
+  // Fetch assets
   const fetchAssets = useCallback(async () => {
     setLoading(true)
     try {
@@ -110,16 +111,26 @@ export default function Assets() {
 
       const res = await getAssets(params)
       const raw = res?.data
-      const list = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : [])
-      const total = Array.isArray(raw) ? raw.length : (typeof raw?.total === 'number' ? raw.total : list.length)
 
-      setAssets(list)
-      setTotalItems(total)
+      if (Array.isArray(raw)) {
+        // Old un-paginated backend: store all assets for smooth client slicing
+        setAllClientAssets(raw)
+        setServerAssets([])
+      } else if (raw && Array.isArray(raw.data)) {
+        // New server-paginated backend
+        setAllClientAssets(null)
+        setServerAssets(raw.data)
+        setServerTotal(raw.total || raw.data.length)
+      } else {
+        setAllClientAssets(null)
+        setServerAssets([])
+        setServerTotal(0)
+      }
       setError(null)
     } catch (e) {
       setError(e.message || 'Failed to load assets')
-      setAssets([])
-      setTotalItems(0)
+      setServerAssets([])
+      setServerTotal(0)
     } finally {
       setLoading(false)
     }
@@ -127,16 +138,42 @@ export default function Assets() {
 
   useEffect(() => { fetchAssets() }, [fetchAssets])
 
+  // Compute displayed assets: handles both server-paginated mode and client-fallback mode
+  const { displayAssets, totalRecords } = useMemo(() => {
+    if (allClientAssets !== null) {
+      // Client-side fallback: filter and slice to strictly pageSize (NEVER render 42K items in DOM)
+      const q = debouncedSearch.toLowerCase().trim()
+      const filtered = allClientAssets.filter(a => {
+        const matchQ = !q ||
+          a.name?.toLowerCase().includes(q) ||
+          a.asset_code?.toLowerCase().includes(q) ||
+          a.serial_number?.toLowerCase().includes(q) ||
+          a.assigned_employee?.toLowerCase().includes(q) ||
+          a.employee_name?.toLowerCase().includes(q) ||
+          a.category?.toLowerCase().includes(q)
+        return matchQ &&
+          (filterStatus === 'All' || a.status === filterStatus) &&
+          (filterDept   === 'All' || String(a.dept_id) === String(filterDept) || a.dept_name === filterDept) &&
+          (filterCat    === 'All' || a.category === filterCat)
+      })
+
+      const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+      return { displayAssets: paginated, totalRecords: filtered.length }
+    } else {
+      return { displayAssets: serverAssets, totalRecords: serverTotal }
+    }
+  }, [allClientAssets, serverAssets, serverTotal, debouncedSearch, filterStatus, filterDept, filterCat, currentPage, pageSize])
+
   // Auto-open edit modal when navigated back from AssetDetail with editId in state
   useEffect(() => {
     const editId = location.state?.editId
-    if (!editId || !Array.isArray(assets) || !assets.length) return
-    const a = assets.find(x => x.id === editId)
+    if (!editId || !displayAssets.length) return
+    const a = displayAssets.find(x => x.id === editId)
     if (a) {
       openEdit(a)
       window.history.replaceState({}, '')
     }
-  }, [assets, location.state])
+  }, [displayAssets, location.state])
 
   const safeDepts = Array.isArray(filterOptions?.departments) ? filterOptions.departments : (Array.isArray(depts) ? depts : [])
   const safeCats = Array.isArray(filterOptions?.categories) ? filterOptions.categories : []
@@ -264,7 +301,6 @@ export default function Assets() {
   const assetStatuses = Array.isArray(masters?.asset_status) ? masters.asset_status.map(m => m.value || m) : []
   const companyCodes  = Array.isArray(masters?.company_code) ? masters.company_code.map(m => m.value || m) : []
   const costCenters   = Array.isArray(masters?.cost_center)  ? masters.cost_center : []
-  const safeAssets    = Array.isArray(assets) ? assets : []
 
   return (
     <div className="space-y-5">
@@ -318,7 +354,7 @@ export default function Assets() {
         <div className="px-6 py-4 border-b border-cream-200 dark:border-gray-700 flex items-center justify-between">
           <div>
             <h3 className="text-sm font-bold text-ink-900 dark:text-gray-100">All Assets</h3>
-            <p className="text-xs text-ink-300 dark:text-gray-400">{totalItems} records{loading ? ' · Loading…' : ''}</p>
+            <p className="text-xs text-ink-300 dark:text-gray-400">{totalRecords} records{loading ? ' · Loading…' : ''}</p>
           </div>
           <Button variant="secondary" size="sm">Export CSV</Button>
         </div>
@@ -333,13 +369,13 @@ export default function Assets() {
               </tr>
             </thead>
             <tbody>
-              {loading && safeAssets.length === 0 ? (
+              {loading && displayAssets.length === 0 ? (
                 <tr><td colSpan={11} className="py-16 text-center text-sm text-ink-300 dark:text-gray-500">Loading assets…</td></tr>
-              ) : safeAssets.map(a => (
+              ) : displayAssets.map(a => (
                 <tr key={a.id} className="border-b border-cream-200 dark:border-gray-700 hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors cursor-pointer"
                   onClick={() => navigate(`/assets/${a.id}`)}>
                   <td className="px-4 py-3"><span className="text-brand-600 font-semibold text-xs">{a.asset_code}</span></td>
-                  <td className="px-4 py-3 max-w-[180px]"><span className="block truncate font-medium text-sm text-ink-900 dark:text-gray-100">{a.name}</span></td>
+                  <td className="px-4 py-3 max-w-[180px]"><span className="block truncate font-medium text-sm text-ink-900 dark:text-gray-100" title={a.name}>{a.name}</span></td>
                   <td className="px-4 py-3"><span className="text-xs bg-cream-100 dark:bg-gray-700 text-ink-600 dark:text-gray-300 px-2 py-1 rounded-lg">{a.category || '—'}</span></td>
                   <td className="px-4 py-3"><span className="font-mono text-xs text-ink-400 dark:text-gray-400">{a.serial_number || '—'}</span></td>
                   <td className="px-4 py-3 text-sm font-semibold text-ink-700 dark:text-gray-200">{formatINR(a.acquisition_value)}</td>
@@ -363,10 +399,10 @@ export default function Assets() {
           </table>
         </div>
 
-        {!loading && safeAssets.length === 0 && (
+        {!loading && displayAssets.length === 0 && (
           <div className="py-16 text-center text-ink-300 dark:text-gray-500">
             <Box size={32} className="mx-auto mb-2 opacity-30"/>
-            <p className="text-sm">{totalItems === 0 && !search && filterStatus === 'All' && filterDept === 'All' && filterCat === 'All'
+            <p className="text-sm">{totalRecords === 0 && !search && filterStatus === 'All' && filterDept === 'All' && filterCat === 'All'
               ? 'No assets yet. Add one or use Bulk Upload.'
               : 'No assets match your filters.'}</p>
           </div>
@@ -374,7 +410,7 @@ export default function Assets() {
       </div>
 
       <Pagination
-        totalItems={totalItems}
+        totalItems={totalRecords}
         currentPage={currentPage}
         pageSize={pageSize}
         onPageChange={setCurrentPage}

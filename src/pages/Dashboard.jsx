@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -26,6 +26,26 @@ const formatINRCompact = v => {
 const formatINR = v =>
   v == null || v === '' ? '—'
   : Number(v).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
+
+// Helper to group list if backend didn't return aggregations
+function groupCount(items, key, topN = 7) {
+  if (!Array.isArray(items) || items.length === 0) return []
+  const map = {}
+  for (const it of items) {
+    const k = (it[key] || '').toString().trim() || 'Unassigned'
+    map[k] = (map[k] || 0) + 1
+  }
+  const arr = Object.entries(map)
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value)
+  if (arr.length <= topN) return arr
+  const top = arr.slice(0, topN - 1)
+  const restVal = arr.slice(topN - 1).reduce((s, d) => s + d.value, 0)
+  const existing = top.find(d => /^others?$/i.test(d.label))
+  if (existing) existing.value += restVal
+  else top.push({ label: 'Other', value: restVal })
+  return top
+}
 
 // Track dark mode (toggled via the `dark` class on <html>)
 function useIsDark() {
@@ -65,6 +85,7 @@ function ChartCard({ title, subtitle, children, empty, emptyText = 'No data yet'
 
 export default function Dashboard() {
   const [stats, setStats] = useState({ totalAssets: 0, totalValue: 0, pendingTransfers: 0, activePlants: 0, byCategory: [], byLocation: [] })
+  const [rawAssets, setRawAssets] = useState([])
   const [recentAssets, setRecentAssets] = useState([])
   const [reqStats, setReqStats] = useState({ pending_dept_head: 0, waiting_asset_code: 0, pending_manager: 0 })
   const [loading, setLoading] = useState(true)
@@ -73,22 +94,45 @@ export default function Dashboard() {
   useEffect(() => {
     Promise.all([
       getDashboardStats().catch(() => ({ data: {} })),
-      getAssets({ page: 1, pageSize: 6 }).catch(() => ({ data: [] })),
+      getAssets({ page: 1, pageSize: 25 }).catch(() => ({ data: [] })),
       getAssetRequests().catch(() => ({ data: { stats: {} } })),
     ])
       .then(([s, a, r]) => {
         setStats(s?.data || {})
-        const rawAssets = a?.data
-        const assetList = Array.isArray(rawAssets) ? rawAssets.slice(0, 6) : (Array.isArray(rawAssets?.data) ? rawAssets.data : [])
-        setRecentAssets(assetList)
+        const raw = a?.data
+        if (Array.isArray(raw)) {
+          // Old backend returning all assets
+          setRawAssets(raw)
+          setRecentAssets(raw.slice(0, 6))
+        } else if (raw && Array.isArray(raw.data)) {
+          // New backend returning paginated data
+          setRawAssets(raw.data)
+          setRecentAssets(raw.data.slice(0, 6))
+        } else {
+          setRawAssets([])
+          setRecentAssets([])
+        }
         setReqStats(r?.data?.stats || {})
       })
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [])
 
-  const byCategory = Array.isArray(stats?.byCategory) ? stats.byCategory : []
-  const byLocation = Array.isArray(stats?.byLocation) ? stats.byLocation : []
+  // If server provided byCategory/byLocation, use them; otherwise compute from rawAssets fallback
+  const byCategory = useMemo(() => {
+    if (Array.isArray(stats?.byCategory) && stats.byCategory.length > 0) {
+      return stats.byCategory
+    }
+    return groupCount(rawAssets, 'category', 7)
+  }, [stats?.byCategory, rawAssets])
+
+  const byLocation = useMemo(() => {
+    if (Array.isArray(stats?.byLocation) && stats.byLocation.length > 0) {
+      return stats.byLocation
+    }
+    return groupCount(rawAssets, 'plant_name', 6)
+  }, [stats?.byLocation, rawAssets])
+
   const pie = isDark ? PIE_DARK : PIE_LIGHT
 
   const axisColor = isDark ? '#9ca3af' : '#6b7280'
@@ -195,24 +239,30 @@ export default function Dashboard() {
           {(!Array.isArray(recentAssets) || recentAssets.length === 0) ? (
             <p className="text-sm text-ink-300 dark:text-gray-500 py-8 text-center">No assets yet</p>
           ) : (
-            <Table>
-              <Thead>
-                <Tr>
-                  <Th>Asset Code</Th><Th>Name</Th><Th>Location</Th><Th>Value</Th><Th>Status</Th>
-                </Tr>
-              </Thead>
-              <Tbody>
-                {recentAssets.map(a => (
-                  <Tr key={a.id}>
-                    <Td className="text-brand-600 dark:text-brand-400 font-medium">{a.asset_code}</Td>
-                    <Td className="dark:text-gray-200">{a.name}</Td>
-                    <Td className="text-ink-400 dark:text-gray-400">{a.plant_name || '—'}</Td>
-                    <Td className="dark:text-gray-200">{formatINR(a.acquisition_value)}</Td>
-                    <Td><Badge label={a.status || 'Active'} /></Td>
-                  </Tr>
-                ))}
-              </Tbody>
-            </Table>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-cream-200 dark:border-gray-700">
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap">Asset Code</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap">Name</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap">Location</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap">Value</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentAssets.map(a => (
+                    <tr key={a.id} className="border-b border-cream-100 dark:border-gray-700/50 hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors">
+                      <td className="px-4 py-2.5 text-sm text-brand-600 dark:text-brand-400 font-semibold whitespace-nowrap">{a.asset_code}</td>
+                      <td className="px-4 py-2.5 text-sm dark:text-gray-200 max-w-[200px] truncate" title={a.name}>{a.name}</td>
+                      <td className="px-4 py-2.5 text-sm text-ink-400 dark:text-gray-400 max-w-[150px] truncate" title={a.plant_name || '—'}>{a.plant_name || '—'}</td>
+                      <td className="px-4 py-2.5 text-sm dark:text-gray-200 whitespace-nowrap font-medium">{formatINR(a.acquisition_value)}</td>
+                      <td className="px-4 py-2.5 text-sm whitespace-nowrap"><Badge label={a.status || 'Active'} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 
