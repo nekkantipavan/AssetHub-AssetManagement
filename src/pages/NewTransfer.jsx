@@ -43,18 +43,24 @@ export default function NewTransfer() {
   const [submitErr,  setSubmitErr]  = useState('')
 
   useEffect(() => {
-    Promise.all([getPlants(), getAssets(), getEmailMasters()])
+    Promise.all([
+      getPlants().catch(() => ({ data: [] })),
+      getAssets().catch(() => ({ data: [] })),
+      getEmailMasters().catch(() => ({ data: [] }))
+    ])
       .then(([p, a, e]) => {
-        setPlants(p.data)
-        setAssets(a.data)
-        setEmailOpts(e.data)
+        setPlants(Array.isArray(p.data) ? p.data : [])
+        const raw = a?.data
+        setAssets(Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []))
+        setEmailOpts(Array.isArray(e.data) ? e.data : [])
         setLoading(false)
       })
       .catch(() => setLoading(false))
   }, [])
 
   // Assets for step 2 — filtered by source plant, not already in transfer
-  const sourceAssets = assets.filter(a => {
+  const safeAssets = Array.isArray(assets) ? assets : []
+  const sourceAssets = safeAssets.filter(a => {
     if (form.from_plant_id && a.plant_id !== parseInt(form.from_plant_id)) return false
     // Block assets already in a pending/active transfer
     if (['Pending Transfer','In Transit'].includes(a.status)) return false

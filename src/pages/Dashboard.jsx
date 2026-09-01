@@ -9,7 +9,6 @@ import StatCard from '../components/dashboard/StatCard'
 import { Table, Thead, Th, Tbody, Tr, Td } from '../components/common/Table'
 import { Badge } from '../components/common/Badge'
 import { getDashboardStats, getAssets, getAssetRequests } from '../data/api'
-// Note: getAssets now accepts pagination params — Dashboard only fetches 6 recent rows
 
 // Validated categorical palettes (see dataviz validator — light & dark tuned)
 const PIE_LIGHT = ['#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#ef4444', '#14b8a6']
@@ -28,8 +27,6 @@ const formatINR = v =>
   v == null || v === '' ? '—'
   : Number(v).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
 
-
-
 // Track dark mode (toggled via the `dark` class on <html>)
 function useIsDark() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
@@ -45,10 +42,10 @@ function useIsDark() {
 function ChartTooltip({ active, payload }) {
   if (!active || !payload?.length) return null
   const p = payload[0]
-  const v = p.value
+  const v = p?.value || 0
   return (
     <div className="bg-white dark:bg-gray-800 border border-cream-200 dark:border-gray-700 rounded-2xl shadow-medium px-3 py-2">
-      <p className="text-xs font-semibold text-ink-700 dark:text-gray-200">{p.payload.label}</p>
+      <p className="text-xs font-semibold text-ink-700 dark:text-gray-200">{p?.payload?.label || 'Unknown'}</p>
       <p className="text-xs text-ink-500 dark:text-gray-400">{v} asset{v === 1 ? '' : 's'}</p>
     </div>
   )
@@ -75,21 +72,23 @@ export default function Dashboard() {
 
   useEffect(() => {
     Promise.all([
-      getDashboardStats(),
-      getAssets({ page: 1, pageSize: 6 }),
-      getAssetRequests(),
+      getDashboardStats().catch(() => ({ data: {} })),
+      getAssets({ page: 1, pageSize: 6 }).catch(() => ({ data: [] })),
+      getAssetRequests().catch(() => ({ data: { stats: {} } })),
     ])
       .then(([s, a, r]) => {
-        setStats(s.data)
-        setRecentAssets(a.data.data)
-        setReqStats(r.data.stats)
+        setStats(s?.data || {})
+        const rawAssets = a?.data
+        const assetList = Array.isArray(rawAssets) ? rawAssets.slice(0, 6) : (Array.isArray(rawAssets?.data) ? rawAssets.data : [])
+        setRecentAssets(assetList)
+        setReqStats(r?.data?.stats || {})
       })
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [])
 
-  const byCategory = stats.byCategory || []
-  const byLocation = stats.byLocation || []
+  const byCategory = Array.isArray(stats?.byCategory) ? stats.byCategory : []
+  const byLocation = Array.isArray(stats?.byLocation) ? stats.byLocation : []
   const pie = isDark ? PIE_DARK : PIE_LIGHT
 
   const axisColor = isDark ? '#9ca3af' : '#6b7280'
@@ -102,14 +101,14 @@ export default function Dashboard() {
     (reqStats.waiting_asset_code || 0) +
     (reqStats.pending_manager || 0)
 
-  const locationTotal = byLocation.reduce((s, d) => s + d.value, 0)
+  const locationTotal = byLocation.reduce((s, d) => s + (Number(d?.value) || 0), 0)
 
   // Real, actionable items — only non-zero ones are shown
   const attention = [
-    { count: stats.pendingTransfers, label: 'Transfers awaiting approval', to: '/transfer' },
-    { count: reqStats.pending_dept_head, label: 'Requests awaiting Dept Head', to: '/asset-requests' },
-    { count: reqStats.waiting_asset_code, label: 'Requests awaiting asset codes', to: '/asset-requests' },
-    { count: reqStats.pending_manager, label: 'Requests awaiting Manager', to: '/asset-requests' },
+    { count: stats?.pendingTransfers || 0, label: 'Transfers awaiting approval', to: '/transfer' },
+    { count: reqStats?.pending_dept_head || 0, label: 'Requests awaiting Dept Head', to: '/asset-requests' },
+    { count: reqStats?.waiting_asset_code || 0, label: 'Requests awaiting asset codes', to: '/asset-requests' },
+    { count: reqStats?.pending_manager || 0, label: 'Requests awaiting Manager', to: '/asset-requests' },
   ].filter(a => a.count > 0)
 
   if (loading) {
@@ -121,9 +120,9 @@ export default function Dashboard() {
 
       {/* KPI tiles */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Box} label="Total Assets" value={stats.totalAssets} sub={`${stats.activePlants} active plants`} highlight />
-        <StatCard icon={IndianRupee} label="Total Value" value={formatINRCompact(stats.totalValue)} sub="Acquisition value" />
-        <StatCard icon={ArrowLeftRight} label="Pending Transfers" value={stats.pendingTransfers} sub="Awaiting approval" />
+        <StatCard icon={Box} label="Total Assets" value={stats?.totalAssets || 0} sub={`${stats?.activePlants || 0} active plants`} highlight />
+        <StatCard icon={IndianRupee} label="Total Value" value={formatINRCompact(stats?.totalValue || 0)} sub="Acquisition value" />
+        <StatCard icon={ArrowLeftRight} label="Pending Transfers" value={stats?.pendingTransfers || 0} sub="Awaiting approval" />
         <StatCard icon={ClipboardList} label="Open Requests" value={openRequests} sub="Awaiting action" />
       </div>
 
@@ -155,7 +154,7 @@ export default function Dashboard() {
                 <PieChart>
                   <Pie data={byLocation} dataKey="value" nameKey="label"
                        innerRadius={62} outerRadius={92} paddingAngle={2} stroke={surface} strokeWidth={2}>
-                    {byLocation.map((d, i) => <Cell key={d.label} fill={pie[i % pie.length]} />)}
+                    {byLocation.map((d, i) => <Cell key={d?.label || i} fill={pie[i % pie.length]} />)}
                   </Pie>
                   <Tooltip content={<ChartTooltip />} />
                 </PieChart>
@@ -169,12 +168,12 @@ export default function Dashboard() {
             {/* Legend */}
             <div className="flex-1 w-full min-w-0 space-y-2 overflow-hidden">
               {byLocation.map((d, i) => (
-                <div key={d.label} className="flex items-center gap-2 min-w-0">
+                <div key={d?.label || i} className="flex items-center gap-2 min-w-0">
                   <span className="w-3 h-3 rounded-md flex-shrink-0" style={{ background: pie[i % pie.length] }} />
-                  <span className="text-xs text-ink-700 dark:text-gray-300 flex-1 min-w-0 truncate" title={d.label}>{d.label}</span>
-                  <span className="text-xs font-semibold text-ink-900 dark:text-white tabular-nums flex-shrink-0">{d.value}</span>
+                  <span className="text-xs text-ink-700 dark:text-gray-300 flex-1 min-w-0 truncate" title={d?.label || 'Unassigned'}>{d?.label || 'Unassigned'}</span>
+                  <span className="text-xs font-semibold text-ink-900 dark:text-white tabular-nums flex-shrink-0">{d?.value || 0}</span>
                   <span className="text-xs text-ink-300 dark:text-gray-500 tabular-nums w-8 text-right flex-shrink-0">
-                    {locationTotal ? Math.round((d.value / locationTotal) * 100) : 0}%
+                    {locationTotal ? Math.round(((d?.value || 0) / locationTotal) * 100) : 0}%
                   </span>
                 </div>
               ))}
@@ -193,7 +192,7 @@ export default function Dashboard() {
               View all <ArrowRight size={13} />
             </Link>
           </div>
-          {recentAssets.length === 0 ? (
+          {(!Array.isArray(recentAssets) || recentAssets.length === 0) ? (
             <p className="text-sm text-ink-300 dark:text-gray-500 py-8 text-center">No assets yet</p>
           ) : (
             <Table>
@@ -209,7 +208,7 @@ export default function Dashboard() {
                     <Td className="dark:text-gray-200">{a.name}</Td>
                     <Td className="text-ink-400 dark:text-gray-400">{a.plant_name || '—'}</Td>
                     <Td className="dark:text-gray-200">{formatINR(a.acquisition_value)}</Td>
-                    <Td><Badge label={a.status} /></Td>
+                    <Td><Badge label={a.status || 'Active'} /></Td>
                   </Tr>
                 ))}
               </Tbody>

@@ -33,19 +33,24 @@ export default function AssetReport() {
   const [filterStatus,setFilterStatus]= useState('All')
 
   useEffect(() => {
-    Promise.all([getAssetReport(), getPlants(), getDepartments()])
+    Promise.all([
+      getAssetReport().catch(() => ({ data: [] })),
+      getPlants().catch(() => ({ data: [] })),
+      getDepartments().catch(() => ({ data: [] }))
+    ])
       .then(([a, p, d]) => {
-        setAssets(a.data)
-        setPlants(p.data)
-        setDepts(d.data)
+        const raw = a?.data
+        setAssets(Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []))
+        setPlants(Array.isArray(p?.data) ? p.data : [])
+        setDepts(Array.isArray(d?.data) ? d.data : [])
         setLoading(false)
       })
       .catch(() => setLoading(false))
   }, [])
 
-  const plantOptions    = ['All', ...plants.map(p => p.name)]
-  const categoryOptions = ['All', ...new Set(assets.map(a => a.category).filter(Boolean))]
-  const deptOptions     = ['All', ...depts.map(d => d.name)]
+  const plantOptions    = ['All', ...(Array.isArray(plants) ? plants.map(p => p.name) : [])]
+  const categoryOptions = ['All', ...new Set((Array.isArray(assets) ? assets : []).map(a => a.category).filter(Boolean))]
+  const deptOptions     = ['All', ...(Array.isArray(depts) ? depts.map(d => d.name) : [])]
   const statusOptions   = ['All', 'Active', 'Inactive', 'In Transfer', 'In Transit']
 
   const filtered = useMemo(() => {

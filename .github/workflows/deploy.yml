@@ -71,3 +71,12 @@ jobs:
           } catch {
               Write-Host "[NOTE] IIS AppPool restart skipped (insufficient permissions for config read)."
           }
+
+      - name: Restart Backend Service (PM2)
+        run: |
+          try {
+              pm2 restart all
+              Write-Host "[OK] PM2 backend service restarted successfully."
+          } catch {
+              Write-Host "[NOTE] PM2 restart command skipped."
+          }

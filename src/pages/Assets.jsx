@@ -77,13 +77,23 @@ export default function Assets() {
 
   // Load lookup data once on mount
   useEffect(() => {
-    Promise.all([getPlants(), getDepartments(), getUsers(), getAssetMastersAll(), getAssetFilterOptions()])
+    Promise.all([
+      getPlants().catch(() => ({ data: [] })),
+      getDepartments().catch(() => ({ data: [] })),
+      getUsers().catch(() => ({ data: [] })),
+      getAssetMastersAll().catch(() => ({ data: {} })),
+      getAssetFilterOptions().catch(() => ({ data: { departments: [], categories: [] } }))
+    ])
       .then(([p, d, u, m, fo]) => {
-        setPlants(p.data)
-        setDepts(d.data)
-        setEmployees(u.data)
-        setMasters(m.data)
-        setFilterOptions(fo.data)
+        setPlants(Array.isArray(p.data) ? p.data : [])
+        setDepts(Array.isArray(d.data) ? d.data : [])
+        setEmployees(Array.isArray(u.data) ? u.data : [])
+        setMasters(m.data && typeof m.data === 'object' ? m.data : {})
+        const foData = fo?.data || {}
+        setFilterOptions({
+          departments: Array.isArray(foData.departments) ? foData.departments : (Array.isArray(d.data) ? d.data : []),
+          categories: Array.isArray(foData.categories) ? foData.categories : (Array.isArray(m.data?.category) ? m.data.category.map(c => c.value || c) : [])
+        })
       })
       .catch(console.error)
   }, [])
@@ -99,11 +109,17 @@ export default function Assets() {
       if (filterCat !== 'All') params.category = filterCat
 
       const res = await getAssets(params)
-      setAssets(res.data.data)
-      setTotalItems(res.data.total)
+      const raw = res?.data
+      const list = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : [])
+      const total = Array.isArray(raw) ? raw.length : (typeof raw?.total === 'number' ? raw.total : list.length)
+
+      setAssets(list)
+      setTotalItems(total)
       setError(null)
     } catch (e) {
-      setError(e.message)
+      setError(e.message || 'Failed to load assets')
+      setAssets([])
+      setTotalItems(0)
     } finally {
       setLoading(false)
     }
@@ -114,7 +130,7 @@ export default function Assets() {
   // Auto-open edit modal when navigated back from AssetDetail with editId in state
   useEffect(() => {
     const editId = location.state?.editId
-    if (!editId || !assets.length) return
+    if (!editId || !Array.isArray(assets) || !assets.length) return
     const a = assets.find(x => x.id === editId)
     if (a) {
       openEdit(a)
@@ -122,13 +138,17 @@ export default function Assets() {
     }
   }, [assets, location.state])
 
+  const safeDepts = Array.isArray(filterOptions?.departments) ? filterOptions.departments : (Array.isArray(depts) ? depts : [])
+  const safeCats = Array.isArray(filterOptions?.categories) ? filterOptions.categories : []
+
   const statusOptions   = ['All', 'Active', 'Inactive', 'In Transfer']
-  const deptOptions     = [{ id: 'All', name: 'All' }, ...filterOptions.departments]
-  const categoryOptions = ['All', ...filterOptions.categories]
+  const deptOptions     = [{ id: 'All', name: 'All' }, ...safeDepts]
+  const categoryOptions = ['All', ...safeCats]
 
   // ── Modal helpers ────────────────────────────────────────────
   function openAdd() { setForm(EMPTY_FORM); setFormError(''); setModalType('add') }
   function openEdit(a) {
+    if (!a) return
     setSelected(a)
     setForm({
       asset_code:          a.asset_code          || '',
@@ -217,10 +237,8 @@ export default function Assets() {
         await updateAsset(selected.id, payload)
       }
       closeModal()
-      // Re-fetch current page to reflect changes
       fetchAssets()
-      // Also refresh filter options in case a new dept/category was introduced
-      getAssetFilterOptions().then(r => setFilterOptions(r.data)).catch(() => {})
+      getAssetFilterOptions().then(r => setFilterOptions(r?.data || {})).catch(() => {})
     } catch (err) {
       setFormError(err.response?.data?.error || 'Save failed. Please try again.')
     } finally {
@@ -241,13 +259,12 @@ export default function Assets() {
     }
   }
 
-  if (error && assets.length === 0) return <div className="py-20 text-center text-sm text-red-500">Error: {error}</div>
-
-  const assetClasses  = masters.asset_class?.map(m => m.value)  || []
-  const categories    = masters.category?.map(m => m.value)      || []
-  const assetStatuses = masters.asset_status?.map(m => m.value)  || []
-  const companyCodes  = masters.company_code?.map(m => m.value)  || []
-  const costCenters   = masters.cost_center  || []
+  const assetClasses  = Array.isArray(masters?.asset_class)  ? masters.asset_class.map(m => m.value || m)  : []
+  const categories    = Array.isArray(masters?.category)     ? masters.category.map(m => m.value || m)     : []
+  const assetStatuses = Array.isArray(masters?.asset_status) ? masters.asset_status.map(m => m.value || m) : []
+  const companyCodes  = Array.isArray(masters?.company_code) ? masters.company_code.map(m => m.value || m) : []
+  const costCenters   = Array.isArray(masters?.cost_center)  ? masters.cost_center : []
+  const safeAssets    = Array.isArray(assets) ? assets : []
 
   return (
     <div className="space-y-5">
@@ -276,7 +293,7 @@ export default function Assets() {
                        text-ink-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-300
                        border-0">
             <option value="All">All</option>
-            {filterOptions.departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            {safeDepts.map(d => <option key={d.id || d.name} value={d.id || d.name}>{d.name}</option>)}
           </select>
 
           <select value={filterCat} onChange={e => setFilterCat(e.target.value)}
@@ -316,9 +333,9 @@ export default function Assets() {
               </tr>
             </thead>
             <tbody>
-              {loading && assets.length === 0 ? (
+              {loading && safeAssets.length === 0 ? (
                 <tr><td colSpan={11} className="py-16 text-center text-sm text-ink-300 dark:text-gray-500">Loading assets…</td></tr>
-              ) : assets.map(a => (
+              ) : safeAssets.map(a => (
                 <tr key={a.id} className="border-b border-cream-200 dark:border-gray-700 hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors cursor-pointer"
                   onClick={() => navigate(`/assets/${a.id}`)}>
                   <td className="px-4 py-3"><span className="text-brand-600 font-semibold text-xs">{a.asset_code}</span></td>
@@ -329,8 +346,8 @@ export default function Assets() {
                   <td className="px-4 py-3 text-xs text-ink-500 dark:text-gray-400">{a.plant_name || '—'}</td>
                   <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{a.dept_name || '—'}</td>
                   <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{a.assigned_employee || a.employee_name || '—'}</td>
-                  <td className="px-4 py-3 text-xs text-ink-400 dark:text-gray-400">{new Date(a.created_at).toLocaleDateString('en-IN')}</td>
-                  <td className="px-4 py-3"><Badge label={a.status}/></td>
+                  <td className="px-4 py-3 text-xs text-ink-400 dark:text-gray-400">{a.created_at ? new Date(a.created_at).toLocaleDateString('en-IN') : '—'}</td>
+                  <td className="px-4 py-3"><Badge label={a.status || 'Active'}/></td>
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center gap-1">
                       <button onClick={() => navigate(`/assets/${a.id}`)} className="p-1.5 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-600 text-ink-400 dark:text-gray-400 transition-colors"><Eye size={14}/></button>
@@ -346,7 +363,7 @@ export default function Assets() {
           </table>
         </div>
 
-        {!loading && assets.length === 0 && (
+        {!loading && safeAssets.length === 0 && (
           <div className="py-16 text-center text-ink-300 dark:text-gray-500">
             <Box size={32} className="mx-auto mb-2 opacity-30"/>
             <p className="text-sm">{totalItems === 0 && !search && filterStatus === 'All' && filterDept === 'All' && filterCat === 'All'
@@ -392,8 +409,8 @@ export default function Assets() {
               <Select label="Cost Center *" name="cost_center" value={form.cost_center} onChange={handleChange}>
                 <option value="">— Select Cost Center —</option>
                 {costCenters.map(c => (
-                  <option key={c.value} value={c.value}>
-                    {c.value}{c.description ? ` — ${c.description}` : ''}
+                  <option key={c.value || c} value={c.value || c}>
+                    {c.value || c}{c.description ? ` — ${c.description}` : ''}
                   </option>
                 ))}
               </Select>
