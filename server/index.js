@@ -638,7 +638,54 @@ app.post('/api/test-email', authMiddleware, requireRole('Admin'), async (req, re
 
 app.get('/api/assets', authMiddleware, async (req, res) => {
   try {
-    const r = await pool.query(`
+    const page     = Math.max(parseInt(req.query.page) || 1, 1)
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 25, 1), 500)
+    const offset   = (page - 1) * pageSize
+    const search   = (req.query.search || '').trim()
+    const status   = (req.query.status || '').trim()
+    const deptId   = (req.query.dept_id || '').trim()
+    const category = (req.query.category || '').trim()
+
+    const conditions = []
+    const params     = []
+    let paramIdx     = 1
+
+    if (search) {
+      const like = `%${search}%`
+      conditions.push(`(
+        a.name              ILIKE $${paramIdx}
+        OR a.asset_code     ILIKE $${paramIdx}
+        OR a.serial_number  ILIKE $${paramIdx}
+        OR a.assigned_employee ILIKE $${paramIdx}
+        OR u.name           ILIKE $${paramIdx}
+        OR a.category       ILIKE $${paramIdx}
+      )`)
+      params.push(like)
+      paramIdx++
+    }
+    if (status) {
+      conditions.push(`a.status = $${paramIdx}`)
+      params.push(status)
+      paramIdx++
+    }
+    if (deptId) {
+      conditions.push(`a.dept_id = $${paramIdx}`)
+      params.push(parseInt(deptId))
+      paramIdx++
+    }
+    if (category) {
+      conditions.push(`a.category = $${paramIdx}`)
+      params.push(category)
+      paramIdx++
+    }
+
+    const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''
+
+    const countQuery = `SELECT COUNT(*)::int FROM assets a
+      LEFT JOIN users u ON a.assigned_user_id = u.id
+      ${whereClause}`
+
+    const dataQuery = `
       SELECT
         a.id,
         a.asset_code,
@@ -675,9 +722,40 @@ app.get('/api/assets', authMiddleware, async (req, res) => {
       LEFT JOIN plants p      ON a.plant_id        = p.id
       LEFT JOIN departments d ON a.dept_id          = d.id
       LEFT JOIN users u       ON a.assigned_user_id = u.id
+      ${whereClause}
       ORDER BY a.created_at DESC
-    `)
-    res.json(r.rows)
+      LIMIT $${paramIdx} OFFSET $${paramIdx + 1}
+    `
+
+    const [countRes, dataRes] = await Promise.all([
+      pool.query(countQuery, params),
+      pool.query(dataQuery, [...params, pageSize, offset]),
+    ])
+
+    res.json({
+      data:     dataRes.rows,
+      total:    countRes.rows[0].count,
+      page,
+      pageSize,
+    })
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+})
+
+// Lightweight endpoint for filter dropdown options (distinct values)
+app.get('/api/assets/filter-options', authMiddleware, async (req, res) => {
+  try {
+    const [depts, cats] = await Promise.all([
+      pool.query(`SELECT DISTINCT d.id, d.name FROM departments d
+                  INNER JOIN assets a ON a.dept_id = d.id
+                  ORDER BY d.name`),
+      pool.query(`SELECT DISTINCT category FROM assets
+                  WHERE category IS NOT NULL AND category != ''
+                  ORDER BY category`),
+    ])
+    res.json({
+      departments: depts.rows,
+      categories: cats.rows.map(r => r.category),
+    })
   } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
@@ -3544,17 +3622,24 @@ app.get('/api/audit-logs', authMiddleware, requireRole('Admin'), async (req, res
 
 app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
   try {
-    const [assets, value, transfers, plants] = await Promise.all([
+    const [assets, value, transfers, plants, byCategory, byLocation] = await Promise.all([
       pool.query("SELECT COUNT(*)::int FROM assets"),
       pool.query("SELECT COALESCE(SUM(acquisition_value),0)::numeric FROM assets"),
       pool.query("SELECT COUNT(*)::int FROM transfers WHERE status='Pending Approval'"),
       pool.query("SELECT COUNT(*)::int FROM plants WHERE status='Active'"),
+      pool.query(`SELECT COALESCE(category, 'Unassigned') AS label, COUNT(*)::int AS value
+                  FROM assets GROUP BY category ORDER BY value DESC LIMIT 7`),
+      pool.query(`SELECT COALESCE(p.name, 'Unassigned') AS label, COUNT(*)::int AS value
+                  FROM assets a LEFT JOIN plants p ON a.plant_id = p.id
+                  GROUP BY p.name ORDER BY value DESC LIMIT 6`),
     ])
     res.json({
       totalAssets:      assets.rows[0].count,
       totalValue:       parseFloat(value.rows[0].coalesce),
       pendingTransfers: transfers.rows[0].count,
       activePlants:     plants.rows[0].count,
+      byCategory:       byCategory.rows,
+      byLocation:       byLocation.rows,
     })
   } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })

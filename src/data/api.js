@@ -32,12 +32,14 @@ export const getMe      = ()   => api.get('/auth/me')
 export const logoutUser = ()   => api.post('/auth/logout')
 
 // ── Assets ───────────────────────────────────────────────────
-export const getAssets   = ()         => api.get('/assets')
+export const getAssets              = params    => api.get('/assets', { params })
+export const getAssetFilterOptions  = ()        => api.get('/assets/filter-options')
 export const getAsset    = id         => api.get(`/assets/${id}`)
 export const createAsset = data       => api.post('/assets', data)
 export const updateAsset = (id, data) => api.put(`/assets/${id}`, data)
 export const deleteAsset = id         => api.delete(`/assets/${id}`)
 export const bulkUpload  = rows       => api.post('/assets/bulk', { rows })
+
 
 // ── Plants ───────────────────────────────────────────────────
 export const getPlants    = ()         => api.get('/plants')

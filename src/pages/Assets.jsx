@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Search, Plus, Eye, Edit2, Trash2, Box, X } from 'lucide-react'
 import { Badge } from '../components/common/Badge'
@@ -7,7 +7,7 @@ import Modal from '../components/common/Modal'
 import Pagination from '../components/common/Pagination'
 import { Input, Select } from '../components/common/FormFields'
 import { useAuth } from '../context/AuthContext'
-import { getAssets, createAsset, updateAsset, deleteAsset, getPlants, getDepartments, getUsers, getAssetMastersAll } from '../data/api'
+import { getAssets, createAsset, updateAsset, deleteAsset, getPlants, getDepartments, getUsers, getAssetMastersAll, getAssetFilterOptions } from '../data/api'
 
 const EMPTY_FORM = {
   asset_code: '', sub_sequence: '0',
@@ -32,16 +32,22 @@ export default function Assets() {
   const navigate  = useNavigate()
   const location  = useLocation()
 
-  const [assets,    setAssets]    = useState([])
+  // Server-paginated data
+  const [assets,     setAssets]     = useState([])
+  const [totalItems, setTotalItems] = useState(0)
+  const [loading,    setLoading]    = useState(true)
+  const [error,      setError]      = useState(null)
+
+  // Lookup data (loaded once)
   const [plants,    setPlants]    = useState([])
   const [depts,     setDepts]     = useState([])
   const [employees, setEmployees] = useState([])
   const [masters,   setMasters]   = useState({ category:[], asset_class:[], asset_status:[], status:[], company_code:[], cost_center:[] })
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState(null)
+  const [filterOptions, setFilterOptions] = useState({ departments: [], categories: [] })
 
-  // Filters
+  // Filters & pagination
   const [search,       setSearch]       = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('All')
   const [filterDept,   setFilterDept]   = useState('All')
   const [filterCat,    setFilterCat]    = useState('All')
@@ -55,20 +61,55 @@ export default function Assets() {
   const [saving,    setSaving]    = useState(false)
   const [formError, setFormError] = useState('')
 
-  useEffect(() => { setCurrentPage(1) }, [search, filterStatus, filterDept, filterCat])
-
+  // Debounce search input (300ms)
+  const debounceRef = useRef(null)
   useEffect(() => {
-    Promise.all([getAssets(), getPlants(), getDepartments(), getUsers(), getAssetMastersAll()])
-      .then(([a, p, d, u, m]) => {
-        setAssets(a.data)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      setDebouncedSearch(search)
+      setCurrentPage(1)
+    }, 300)
+    return () => clearTimeout(debounceRef.current)
+  }, [search])
+
+  // Reset page when filters change
+  useEffect(() => { setCurrentPage(1) }, [filterStatus, filterDept, filterCat])
+
+  // Load lookup data once on mount
+  useEffect(() => {
+    Promise.all([getPlants(), getDepartments(), getUsers(), getAssetMastersAll(), getAssetFilterOptions()])
+      .then(([p, d, u, m, fo]) => {
         setPlants(p.data)
         setDepts(d.data)
         setEmployees(u.data)
         setMasters(m.data)
-        setLoading(false)
+        setFilterOptions(fo.data)
       })
-      .catch(e => { setError(e.message); setLoading(false) })
+      .catch(console.error)
   }, [])
+
+  // Fetch assets from server whenever filters/page change
+  const fetchAssets = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params = { page: currentPage, pageSize }
+      if (debouncedSearch) params.search = debouncedSearch
+      if (filterStatus !== 'All') params.status = filterStatus
+      if (filterDept !== 'All') params.dept_id = filterDept
+      if (filterCat !== 'All') params.category = filterCat
+
+      const res = await getAssets(params)
+      setAssets(res.data.data)
+      setTotalItems(res.data.total)
+      setError(null)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [currentPage, pageSize, debouncedSearch, filterStatus, filterDept, filterCat])
+
+  useEffect(() => { fetchAssets() }, [fetchAssets])
 
   // Auto-open edit modal when navigated back from AssetDetail with editId in state
   useEffect(() => {
@@ -82,27 +123,8 @@ export default function Assets() {
   }, [assets, location.state])
 
   const statusOptions   = ['All', 'Active', 'Inactive', 'In Transfer']
-  const deptOptions     = ['All', ...new Set(assets.map(a => a.dept_name).filter(Boolean))]
-  const categoryOptions = ['All', ...new Set(assets.map(a => a.category).filter(Boolean))]
-
-  const filtered = useMemo(() => assets.filter(a => {
-    const q = search.toLowerCase()
-    const matchQ = !q ||
-      a.name?.toLowerCase().includes(q) ||
-      a.asset_code?.toLowerCase().includes(q) ||
-      a.serial_number?.toLowerCase().includes(q) ||
-      a.assigned_employee?.toLowerCase().includes(q) ||
-      a.employee_name?.toLowerCase().includes(q) ||
-      a.category?.toLowerCase().includes(q)
-    return matchQ &&
-      (filterStatus === 'All' || a.status === filterStatus) &&
-      (filterDept   === 'All' || a.dept_name === filterDept) &&
-      (filterCat    === 'All' || a.category  === filterCat)
-  }), [assets, search, filterStatus, filterDept, filterCat])
-
-  const paginated = useMemo(() => {
-    return filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
-  }, [filtered, currentPage, pageSize])
+  const deptOptions     = [{ id: 'All', name: 'All' }, ...filterOptions.departments]
+  const categoryOptions = ['All', ...filterOptions.categories]
 
   // ── Modal helpers ────────────────────────────────────────────
   function openAdd() { setForm(EMPTY_FORM); setFormError(''); setModalType('add') }
@@ -188,18 +210,17 @@ export default function Assets() {
         status:               form.status,
         notes:                form.notes || null,
       }
-      const plant = plants.find(p => p.id === parseInt(form.plant_id))
-      const dept  = depts.find(d  => d.id === parseInt(form.dept_id))
 
       if (modalType === 'add') {
-        const r = await createAsset(payload)
-        setAssets(prev => [{ ...r.data, plant_name: plant?.name, dept_name: dept?.name }, ...prev])
+        await createAsset(payload)
       } else {
-        const r = await updateAsset(selected.id, payload)
-        setAssets(prev => prev.map(a => a.id === selected.id
-          ? { ...r.data, plant_name: plant?.name, dept_name: dept?.name } : a))
+        await updateAsset(selected.id, payload)
       }
       closeModal()
+      // Re-fetch current page to reflect changes
+      fetchAssets()
+      // Also refresh filter options in case a new dept/category was introduced
+      getAssetFilterOptions().then(r => setFilterOptions(r.data)).catch(() => {})
     } catch (err) {
       setFormError(err.response?.data?.error || 'Save failed. Please try again.')
     } finally {
@@ -211,8 +232,8 @@ export default function Assets() {
     setSaving(true)
     try {
       await deleteAsset(selected.id)
-      setAssets(prev => prev.filter(a => a.id !== selected.id))
       closeModal()
+      fetchAssets()
     } catch (err) {
       setFormError(err.response?.data?.error || 'Delete failed.')
     } finally {
@@ -220,8 +241,7 @@ export default function Assets() {
     }
   }
 
-  if (loading) return <div className="py-20 text-center text-sm text-ink-400 dark:text-gray-400">Loading assets…</div>
-  if (error)   return <div className="py-20 text-center text-sm text-red-500">Error: {error}</div>
+  if (error && assets.length === 0) return <div className="py-20 text-center text-sm text-red-500">Error: {error}</div>
 
   const assetClasses  = masters.asset_class?.map(m => m.value)  || []
   const categories    = masters.category?.map(m => m.value)      || []
@@ -244,18 +264,27 @@ export default function Assets() {
                          focus:outline-none focus:ring-2 focus:ring-brand-300 w-56"/>
           </div>
 
-          {[
-            { value: filterStatus, onChange: setFilterStatus, options: statusOptions,   placeholder:'Status'     },
-            { value: filterDept,   onChange: setFilterDept,   options: deptOptions,     placeholder:'Department' },
-            { value: filterCat,    onChange: setFilterCat,    options: categoryOptions, placeholder:'Category'   },
-          ].map((f, i) => (
-            <select key={i} value={f.value} onChange={e => f.onChange(e.target.value)}
-              className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft px-3 py-2.5 text-sm
-                         text-ink-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-300
-                         border-0">
-              {f.options.map(o => <option key={o}>{o}</option>)}
-            </select>
-          ))}
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft px-3 py-2.5 text-sm
+                       text-ink-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-300
+                       border-0">
+            {statusOptions.map(o => <option key={o}>{o}</option>)}
+          </select>
+
+          <select value={filterDept} onChange={e => setFilterDept(e.target.value)}
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft px-3 py-2.5 text-sm
+                       text-ink-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-300
+                       border-0">
+            <option value="All">All</option>
+            {filterOptions.departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+
+          <select value={filterCat} onChange={e => setFilterCat(e.target.value)}
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-soft px-3 py-2.5 text-sm
+                       text-ink-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-300
+                       border-0">
+            {categoryOptions.map(o => <option key={o}>{o}</option>)}
+          </select>
 
           {(filterStatus !== 'All' || filterDept !== 'All' || filterCat !== 'All' || search) && (
             <button onClick={() => { setSearch(''); setFilterStatus('All'); setFilterDept('All'); setFilterCat('All') }}
@@ -272,7 +301,7 @@ export default function Assets() {
         <div className="px-6 py-4 border-b border-cream-200 dark:border-gray-700 flex items-center justify-between">
           <div>
             <h3 className="text-sm font-bold text-ink-900 dark:text-gray-100">All Assets</h3>
-            <p className="text-xs text-ink-300 dark:text-gray-400">{filtered.length} of {assets.length} records</p>
+            <p className="text-xs text-ink-300 dark:text-gray-400">{totalItems} records{loading ? ' · Loading…' : ''}</p>
           </div>
           <Button variant="secondary" size="sm">Export CSV</Button>
         </div>
@@ -287,7 +316,9 @@ export default function Assets() {
               </tr>
             </thead>
             <tbody>
-              {paginated.map(a => (
+              {loading && assets.length === 0 ? (
+                <tr><td colSpan={11} className="py-16 text-center text-sm text-ink-300 dark:text-gray-500">Loading assets…</td></tr>
+              ) : assets.map(a => (
                 <tr key={a.id} className="border-b border-cream-200 dark:border-gray-700 hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors cursor-pointer"
                   onClick={() => navigate(`/assets/${a.id}`)}>
                   <td className="px-4 py-3"><span className="text-brand-600 font-semibold text-xs">{a.asset_code}</span></td>
@@ -315,16 +346,18 @@ export default function Assets() {
           </table>
         </div>
 
-        {filtered.length === 0 && (
+        {!loading && assets.length === 0 && (
           <div className="py-16 text-center text-ink-300 dark:text-gray-500">
             <Box size={32} className="mx-auto mb-2 opacity-30"/>
-            <p className="text-sm">{assets.length === 0 ? 'No assets yet. Add one or use Bulk Upload.' : 'No assets match your filters.'}</p>
+            <p className="text-sm">{totalItems === 0 && !search && filterStatus === 'All' && filterDept === 'All' && filterCat === 'All'
+              ? 'No assets yet. Add one or use Bulk Upload.'
+              : 'No assets match your filters.'}</p>
           </div>
         )}
       </div>
 
       <Pagination
-        totalItems={filtered.length}
+        totalItems={totalItems}
         currentPage={currentPage}
         pageSize={pageSize}
         onPageChange={setCurrentPage}

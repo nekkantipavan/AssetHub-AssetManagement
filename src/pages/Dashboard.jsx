@@ -9,6 +9,7 @@ import StatCard from '../components/dashboard/StatCard'
 import { Table, Thead, Th, Tbody, Tr, Td } from '../components/common/Table'
 import { Badge } from '../components/common/Badge'
 import { getDashboardStats, getAssets, getAssetRequests } from '../data/api'
+// Note: getAssets now accepts pagination params — Dashboard only fetches 6 recent rows
 
 // Validated categorical palettes (see dataviz validator — light & dark tuned)
 const PIE_LIGHT = ['#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#ef4444', '#14b8a6']
@@ -27,25 +28,7 @@ const formatINR = v =>
   v == null || v === '' ? '—'
   : Number(v).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
 
-// Group a list by a field into [{ label, value }] sorted desc, folding overflow into "Other"
-function groupCount(items, key, topN = 7) {
-  const map = {}
-  for (const it of items) {
-    const k = (it[key] || '').toString().trim() || 'Unassigned'
-    map[k] = (map[k] || 0) + 1
-  }
-  const arr = Object.entries(map)
-    .map(([label, value]) => ({ label, value }))
-    .sort((a, b) => b.value - a.value)
-  if (arr.length <= topN) return arr
-  const top = arr.slice(0, topN - 1)
-  const restVal = arr.slice(topN - 1).reduce((s, d) => s + d.value, 0)
-  // merge remainder into an existing "Other"/"Others" bucket if the data already has one
-  const existing = top.find(d => /^others?$/i.test(d.label))
-  if (existing) existing.value += restVal
-  else top.push({ label: 'Other', value: restVal })
-  return top
-}
+
 
 // Track dark mode (toggled via the `dark` class on <html>)
 function useIsDark() {
@@ -84,25 +67,29 @@ function ChartCard({ title, subtitle, children, empty, emptyText = 'No data yet'
 }
 
 export default function Dashboard() {
-  const [stats, setStats] = useState({ totalAssets: 0, totalValue: 0, pendingTransfers: 0, activePlants: 0 })
-  const [assets, setAssets] = useState([])
+  const [stats, setStats] = useState({ totalAssets: 0, totalValue: 0, pendingTransfers: 0, activePlants: 0, byCategory: [], byLocation: [] })
+  const [recentAssets, setRecentAssets] = useState([])
   const [reqStats, setReqStats] = useState({ pending_dept_head: 0, waiting_asset_code: 0, pending_manager: 0 })
   const [loading, setLoading] = useState(true)
   const isDark = useIsDark()
 
   useEffect(() => {
-    Promise.all([getDashboardStats(), getAssets(), getAssetRequests()])
+    Promise.all([
+      getDashboardStats(),
+      getAssets({ page: 1, pageSize: 6 }),
+      getAssetRequests(),
+    ])
       .then(([s, a, r]) => {
         setStats(s.data)
-        setAssets(a.data)
+        setRecentAssets(a.data.data)
         setReqStats(r.data.stats)
       })
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [])
 
-  const byCategory = groupCount(assets, 'category', 7)
-  const byLocation = groupCount(assets, 'plant_name', 6)
+  const byCategory = stats.byCategory || []
+  const byLocation = stats.byLocation || []
   const pie = isDark ? PIE_DARK : PIE_LIGHT
 
   const axisColor = isDark ? '#9ca3af' : '#6b7280'
@@ -145,11 +132,11 @@ export default function Dashboard() {
 
         {/* Bar graph — assets by category */}
         <ChartCard title="Assets by Category" subtitle="Distribution across categories" empty={byCategory.length === 0}>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={byCategory} margin={{ top: 20, right: 8, left: -18, bottom: 0 }}>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={byCategory} margin={{ top: 20, right: 8, left: -18, bottom: 60 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
               <XAxis dataKey="label" stroke={axisColor} tickLine={false} axisLine={false}
-                     tick={{ fontSize: 11 }} interval={0} />
+                     tick={{ fontSize: 10 }} interval={0} angle={-35} textAnchor="end" height={70} />
               <YAxis stroke={axisColor} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} allowDecimals={false} width={32} />
               <Tooltip cursor={{ fill: isDark ? '#ffffff10' : '#00000008' }} content={<ChartTooltip />} />
               <Bar dataKey="value" fill={barColor} radius={[6, 6, 0, 0]} maxBarSize={48}>
@@ -180,13 +167,13 @@ export default function Dashboard() {
             </div>
 
             {/* Legend */}
-            <div className="flex-1 w-full space-y-2">
+            <div className="flex-1 w-full min-w-0 space-y-2 overflow-hidden">
               {byLocation.map((d, i) => (
-                <div key={d.label} className="flex items-center gap-2.5">
+                <div key={d.label} className="flex items-center gap-2 min-w-0">
                   <span className="w-3 h-3 rounded-md flex-shrink-0" style={{ background: pie[i % pie.length] }} />
-                  <span className="text-sm text-ink-700 dark:text-gray-300 flex-1 truncate">{d.label}</span>
-                  <span className="text-sm font-semibold text-ink-900 dark:text-white tabular-nums">{d.value}</span>
-                  <span className="text-xs text-ink-300 dark:text-gray-500 tabular-nums w-10 text-right">
+                  <span className="text-xs text-ink-700 dark:text-gray-300 flex-1 min-w-0 truncate" title={d.label}>{d.label}</span>
+                  <span className="text-xs font-semibold text-ink-900 dark:text-white tabular-nums flex-shrink-0">{d.value}</span>
+                  <span className="text-xs text-ink-300 dark:text-gray-500 tabular-nums w-8 text-right flex-shrink-0">
                     {locationTotal ? Math.round((d.value / locationTotal) * 100) : 0}%
                   </span>
                 </div>
@@ -206,7 +193,7 @@ export default function Dashboard() {
               View all <ArrowRight size={13} />
             </Link>
           </div>
-          {assets.length === 0 ? (
+          {recentAssets.length === 0 ? (
             <p className="text-sm text-ink-300 dark:text-gray-500 py-8 text-center">No assets yet</p>
           ) : (
             <Table>
@@ -216,7 +203,7 @@ export default function Dashboard() {
                 </Tr>
               </Thead>
               <Tbody>
-                {assets.slice(0, 6).map(a => (
+                {recentAssets.map(a => (
                   <Tr key={a.id}>
                     <Td className="text-brand-600 dark:text-brand-400 font-medium">{a.asset_code}</Td>
                     <Td className="dark:text-gray-200">{a.name}</Td>
