@@ -408,7 +408,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' })
  
     const result = await pool.query(
-      `SELECT * FROM users WHERE username = $1 AND status = 'Active'`,
+      `SELECT * FROM users WHERE (LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)) AND status = 'Active'`,
       [username.trim()]
     )
  
