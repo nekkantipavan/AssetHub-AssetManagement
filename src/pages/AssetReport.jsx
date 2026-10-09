@@ -155,42 +155,108 @@ export default function AssetReport() {
         ))}
       </div>
 
-      {/* Filters */}
+      {/* Filters with Explicit Headings */}
       <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-card p-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative flex-1 min-w-48">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search by name, asset code, serial, employee…"
-              className="pl-9 pr-4 py-2.5 bg-cream-100 dark:bg-gray-700 rounded-2xl text-sm placeholder-ink-300 focus:outline-none focus:ring-2 focus:ring-brand-300 w-full"
-            />
+        <div className="flex flex-wrap items-end gap-3.5">
+          
+          {/* Search Input with Heading */}
+          <div className="flex-1 min-w-[220px] flex flex-col gap-1.5">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-ink-500 dark:text-gray-400 flex items-center gap-1">
+              <Search size={12} className="text-brand-500"/> Search Records
+            </label>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-300 dark:text-gray-500" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search by name, asset code, serial, employee…"
+                className="pl-9 pr-4 py-2.5 bg-cream-100 dark:bg-gray-700 rounded-2xl text-xs placeholder-ink-300 dark:placeholder-gray-500 text-ink-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-300 border border-cream-200 dark:border-gray-650 w-full"
+              />
+            </div>
           </div>
 
-          {[
-            { label: 'Plant',      value: filterPlant,  onChange: setFilterPlant,  options: plantOptions    },
-            { label: 'Category',   value: filterCat,    onChange: setFilterCat,    options: categoryOptions },
-            { label: 'Department', value: filterDept,   onChange: setFilterDept,   options: deptOptions     },
-            { label: 'Status',     value: filterStatus, onChange: setFilterStatus, options: statusOptions   },
-          ].map(f => (
+          {/* Plant Dropdown with Heading */}
+          <div className="flex flex-col gap-1.5 min-w-[160px] max-w-[240px] flex-1 sm:flex-initial">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-ink-500 dark:text-gray-400">
+              Plant / Business Area
+            </label>
             <select
-              key={f.label}
-              value={f.value}
-              onChange={e => f.onChange(e.target.value)}
-              className="bg-cream-100 dark:bg-gray-700 rounded-2xl px-3 py-2.5 text-sm text-ink-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-300 border-0"
+              value={filterPlant}
+              onChange={e => setFilterPlant(e.target.value)}
+              className="bg-cream-100 dark:bg-gray-700 rounded-2xl px-3 py-2.5 text-xs text-ink-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-300 border border-cream-200 dark:border-gray-650 truncate"
             >
-              {f.options.map(o => <option key={o}>{o}</option>)}
+              <option value="All">All Plants</option>
+              {plantOptions.filter(o => o !== 'All').map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
             </select>
-          ))}
+          </div>
 
+          {/* Category Dropdown with Heading */}
+          <div className="flex flex-col gap-1.5 min-w-[140px] flex-1 sm:flex-initial">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-ink-500 dark:text-gray-400">
+              Category
+            </label>
+            <select
+              value={filterCat}
+              onChange={e => setFilterCat(e.target.value)}
+              className="bg-cream-100 dark:bg-gray-700 rounded-2xl px-3 py-2.5 text-xs text-ink-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-300 border border-cream-200 dark:border-gray-650 truncate"
+            >
+              <option value="All">All Categories</option>
+              {categoryOptions.filter(o => o !== 'All').map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Department Dropdown with Heading */}
+          <div className="flex flex-col gap-1.5 min-w-[150px] flex-1 sm:flex-initial">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-ink-500 dark:text-gray-400">
+              Department
+            </label>
+            <select
+              value={filterDept}
+              onChange={e => setFilterDept(e.target.value)}
+              className="bg-cream-100 dark:bg-gray-700 rounded-2xl px-3 py-2.5 text-xs text-ink-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-300 border border-cream-200 dark:border-gray-650 truncate"
+            >
+              <option value="All">All Departments</option>
+              {deptOptions.filter(o => o !== 'All').map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Status Dropdown with Heading */}
+          <div className="flex flex-col gap-1.5 min-w-[130px] flex-1 sm:flex-initial">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-ink-500 dark:text-gray-400">
+              Status
+            </label>
+            <select
+              value={filterStatus}
+              onChange={e => setFilterStatus(e.target.value)}
+              className="bg-cream-100 dark:bg-gray-700 rounded-2xl px-3 py-2.5 text-xs text-ink-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-300 border border-cream-200 dark:border-gray-650"
+            >
+              <option value="All">All Statuses</option>
+              {statusOptions.filter(o => o !== 'All').map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Clear Filters Button */}
           {hasFilter && (
-            <button onClick={clearFilters} className="flex items-center gap-1 text-xs text-brand-600 font-medium hover:underline">
-              <X size={12} /> Clear
-            </button>
+            <div className="flex flex-col justify-end pb-1">
+              <button
+                onClick={clearFilters}
+                className="flex items-center gap-1 text-xs text-brand-600 dark:text-brand-400 font-semibold hover:underline px-2.5 py-2 rounded-xl hover:bg-brand-50 dark:hover:bg-brand-900/20 transition-colors"
+              >
+                <X size={13} /> Clear
+              </button>
+            </div>
           )}
         </div>
       </div>
+
 
       {/* Table */}
       <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-card overflow-hidden">
