@@ -58,3 +58,68 @@
     @apply bg-white dark:bg-gray-800 rounded-2xl shadow-card p-5;
   }
 }
+
+/* ── Print Media Styles for Asset Labels ─────────────────────── */
+@media print {
+  /* Hide non-printable app UI */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Show only printable labels container */
+  #ams-printable-labels-area,
+  #ams-printable-labels-area * {
+    visibility: visible;
+  }
+
+  #ams-printable-labels-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background: transparent !important;
+    color: #000 !important;
+    display: block !important;
+  }
+
+  @page {
+    margin: 4mm;
+    size: auto;
+  }
+
+  .ams-print-sheet {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4mm;
+    justify-content: flex-start;
+    align-items: flex-start;
+    width: 100%;
+  }
+
+  .ams-thermal-roll .ams-single-label-page {
+    page-break-after: always;
+    break-after: page;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 2mm;
+  }
+
+  .ams-multi-sheet .ams-single-label-page {
+    display: inline-block;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    margin-bottom: 3mm;
+  }
+
+  .asset-label-box {
+    border: 1px solid #000 !important;
+    color: #000 !important;
+    background: #fff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+

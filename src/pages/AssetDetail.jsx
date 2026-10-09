@@ -2,12 +2,14 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, ArrowRight, Box, Edit2, Trash2,
-  Package, RotateCcw, Clock, CheckCircle, AlertTriangle, Shield
+  Package, RotateCcw, Clock, CheckCircle, AlertTriangle, Shield,
+  Printer
 } from 'lucide-react'
 import Button from '../components/common/Button'
 import { Badge } from '../components/common/Badge'
 import { useAuth } from '../context/AuthContext'
 import { getAsset, deleteAsset } from '../data/api'
+import PrintLabelsModal from '../components/labels/PrintLabelsModal'
 
 const formatINR = v =>
   v == null || v === '' ? '—'
@@ -50,9 +52,10 @@ export default function AssetDetail() {
   const { canEdit, user } = useAuth()
   const editable = canEdit('assets')
 
-  const [data,     setData]     = useState(null)
-  const [loading,  setLoading]  = useState(true)
-  const [deleting, setDeleting] = useState(false)
+  const [data,             setData]             = useState(null)
+  const [loading,          setLoading]          = useState(true)
+  const [deleting,         setDeleting]         = useState(false)
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -122,20 +125,26 @@ export default function AssetDetail() {
             </div>
           </div>
         </div>
-        {editable && (
-          <div className="flex gap-2 flex-shrink-0">
-            <Button variant="secondary"
-              onClick={() => navigate('/assets', { state: { editId: Number(id) } })}>
-              <Edit2 size={14}/> Edit Asset
-            </Button>
-            {user?.role === 'Admin' && (
-              <Button variant="danger" onClick={handleDelete} disabled={deleting}>
-                <Trash2 size={14}/> {deleting ? 'Deleting…' : 'Delete'}
+        <div className="flex gap-2 flex-shrink-0">
+          <Button variant="secondary" onClick={() => setIsPrintModalOpen(true)}>
+            <Printer size={14}/> Print Label
+          </Button>
+          {editable && (
+            <>
+              <Button variant="secondary"
+                onClick={() => navigate('/assets', { state: { editId: Number(id) } })}>
+                <Edit2 size={14}/> Edit Asset
               </Button>
-            )}
-          </div>
-        )}
+              {user?.role === 'Admin' && (
+                <Button variant="danger" onClick={handleDelete} disabled={deleting}>
+                  <Trash2 size={14}/> {deleting ? 'Deleting…' : 'Delete'}
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       </div>
+
 
       {/* Body: 3-column grid */}
       <div className="grid grid-cols-3 gap-5 items-start">
@@ -323,6 +332,15 @@ export default function AssetDetail() {
           </div>
         </div>
       </div>
+
+      {/* ── Print Labels Modal ──────────────────────────────────── */}
+      <PrintLabelsModal
+        isOpen={isPrintModalOpen}
+        onClose={() => setIsPrintModalOpen(false)}
+        initialAssets={asset ? [asset] : []}
+      />
+
     </div>
   )
 }
+

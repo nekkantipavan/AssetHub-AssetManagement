@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Search, Plus, Eye, Edit2, Trash2, Box, X } from 'lucide-react'
+import { Search, Plus, Eye, Edit2, Trash2, Box, X, ScanLine, Printer, CheckSquare, Square } from 'lucide-react'
 import { Badge } from '../components/common/Badge'
 import Button from '../components/common/Button'
 import Modal from '../components/common/Modal'
@@ -8,6 +8,8 @@ import Pagination from '../components/common/Pagination'
 import { Input, Select } from '../components/common/FormFields'
 import { useAuth } from '../context/AuthContext'
 import { getAssets, createAsset, updateAsset, deleteAsset, getPlants, getDepartments, getUsers, getAssetMastersAll, getAssetFilterOptions } from '../data/api'
+import ScanAssetModal from '../components/scanner/ScanAssetModal'
+import PrintLabelsModal from '../components/labels/PrintLabelsModal'
 
 const EMPTY_FORM = {
   asset_code: '', sub_sequence: '0',
@@ -61,6 +63,13 @@ export default function Assets() {
   const [form,      setForm]      = useState(EMPTY_FORM)
   const [saving,    setSaving]    = useState(false)
   const [formError, setFormError] = useState('')
+
+  // Scan & Print Label State
+  const [isScanModalOpen, setIsScanModalOpen] = useState(false)
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false)
+  const [selectedForPrint, setSelectedForPrint] = useState([])
+  const [selectedAssetIds, setSelectedAssetIds] = useState(new Set())
+
 
   // Debounce search input (300ms)
   const debounceRef = useRef(null)
@@ -283,6 +292,47 @@ export default function Assets() {
     }
   }
 
+  // Selection helpers
+  const allPageSelected = displayAssets.length > 0 && displayAssets.every(a => selectedAssetIds.has(a.id))
+
+  function toggleSelectAllPage() {
+    if (allPageSelected) {
+      const next = new Set(selectedAssetIds)
+      displayAssets.forEach(a => next.delete(a.id))
+      setSelectedAssetIds(next)
+    } else {
+      const next = new Set(selectedAssetIds)
+      displayAssets.forEach(a => next.add(a.id))
+      setSelectedAssetIds(next)
+    }
+  }
+
+  function toggleSelectAsset(id, e) {
+    if (e) e.stopPropagation()
+    const next = new Set(selectedAssetIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelectedAssetIds(next)
+  }
+
+  function handleOpenPrintSelected() {
+    const list = (allClientAssets || serverAssets || displayAssets).filter(a => selectedAssetIds.has(a.id))
+    setSelectedForPrint(list.length > 0 ? list : displayAssets.slice(0, 5))
+    setIsPrintModalOpen(true)
+  }
+
+  function handlePrintSingle(asset, e) {
+    if (e) e.stopPropagation()
+    setSelectedForPrint([asset])
+    setIsPrintModalOpen(true)
+  }
+
+  function handleOpenCreateFromScan(code) {
+    setForm({ ...EMPTY_FORM, asset_code: code || '' })
+    setFormError('')
+    setModalType('add')
+  }
+
   async function handleDelete() {
     setSaving(true)
     try {
@@ -346,8 +396,45 @@ export default function Assets() {
             </button>
           )}
         </div>
-        {editable && <Button onClick={openAdd}><Plus size={15}/> Add Asset</Button>}
+
+        {/* Top Action Buttons */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="secondary" onClick={() => setIsScanModalOpen(true)}>
+            <ScanLine size={15}/> Scan Asset
+          </Button>
+
+          <Button variant="secondary" onClick={() => {
+            const list = displayAssets.filter(a => selectedAssetIds.has(a.id))
+            setSelectedForPrint(list)
+            setIsPrintModalOpen(true)
+          }}>
+            <Printer size={15}/> Print Labels
+          </Button>
+
+          {editable && <Button onClick={openAdd}><Plus size={15}/> Add Asset</Button>}
+        </div>
       </div>
+
+      {/* Floating Batch Selection Bar */}
+      {selectedAssetIds.size > 0 && (
+        <div className="bg-brand-50 dark:bg-brand-900/30 border border-brand-200 dark:border-brand-800 rounded-2xl px-5 py-3 flex items-center justify-between flex-wrap gap-3 animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="flex items-center gap-2 text-xs font-bold text-brand-900 dark:text-brand-200">
+            <CheckSquare size={16} className="text-brand-600" />
+            <span>{selectedAssetIds.size} {selectedAssetIds.size === 1 ? 'asset' : 'assets'} selected</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelectedAssetIds(new Set())}
+              className="px-3 py-1.5 rounded-xl border border-brand-200 dark:border-brand-700 bg-white dark:bg-gray-800 text-xs font-semibold text-ink-600 dark:text-gray-300 hover:bg-cream-50"
+            >
+              Clear Selection
+            </button>
+            <Button size="sm" onClick={handleOpenPrintSelected}>
+              <Printer size={13} /> Print Selected Labels ({selectedAssetIds.size})
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-card overflow-hidden">
@@ -363,6 +450,11 @@ export default function Assets() {
           <table className="w-full min-w-[1200px]">
             <thead>
               <tr className="border-b border-cream-200 dark:border-gray-700">
+                <th className="px-4 py-3 w-10 text-center">
+                  <button onClick={toggleSelectAllPage} title="Select All On Page" className="p-1 rounded hover:bg-cream-200 dark:hover:bg-gray-700 text-ink-500">
+                    {allPageSelected ? <CheckSquare size={15} className="text-brand-600" /> : <Square size={15} />}
+                  </button>
+                </th>
                 {['Asset Code','Asset Description','Category','Serial Number','Acq. Value','Plant','Department','Assigned To','Created','Status','Actions'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-ink-300 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
                 ))}
@@ -370,34 +462,46 @@ export default function Assets() {
             </thead>
             <tbody>
               {loading && displayAssets.length === 0 ? (
-                <tr><td colSpan={11} className="py-16 text-center text-sm text-ink-300 dark:text-gray-500">Loading assets…</td></tr>
-              ) : displayAssets.map(a => (
-                <tr key={a.id} className="border-b border-cream-200 dark:border-gray-700 hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors cursor-pointer"
-                  onClick={() => navigate(`/assets/${a.id}`)}>
-                  <td className="px-4 py-3"><span className="text-brand-600 font-semibold text-xs">{a.asset_code}</span></td>
-                  <td className="px-4 py-3 max-w-[180px]"><span className="block truncate font-medium text-sm text-ink-900 dark:text-gray-100" title={a.name}>{a.name}</span></td>
-                  <td className="px-4 py-3"><span className="text-xs bg-cream-100 dark:bg-gray-700 text-ink-600 dark:text-gray-300 px-2 py-1 rounded-lg">{a.category || '—'}</span></td>
-                  <td className="px-4 py-3"><span className="font-mono text-xs text-ink-400 dark:text-gray-400">{a.serial_number || '—'}</span></td>
-                  <td className="px-4 py-3 text-sm font-semibold text-ink-700 dark:text-gray-200">{formatINR(a.acquisition_value)}</td>
-                  <td className="px-4 py-3 text-xs text-ink-500 dark:text-gray-400">{a.plant_name || '—'}</td>
-                  <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{a.dept_name || '—'}</td>
-                  <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{a.assigned_employee || a.employee_name || '—'}</td>
-                  <td className="px-4 py-3 text-xs text-ink-400 dark:text-gray-400">{a.created_at ? new Date(a.created_at).toLocaleDateString('en-IN') : '—'}</td>
-                  <td className="px-4 py-3"><Badge label={a.status || 'Active'}/></td>
-                  <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => navigate(`/assets/${a.id}`)} className="p-1.5 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-600 text-ink-400 dark:text-gray-400 transition-colors"><Eye size={14}/></button>
-                      {editable && <>
-                        <button onClick={() => openEdit(a)}   className="p-1.5 rounded-xl hover:bg-brand-50 dark:hover:bg-brand-900/20 hover:text-brand-600 text-ink-400 dark:text-gray-400 transition-colors"><Edit2  size={14}/></button>
-                        <button onClick={() => openDelete(a)} className="p-1.5 rounded-xl hover:bg-red-50   dark:hover:bg-red-900/20   hover:text-red-500   text-ink-400 dark:text-gray-400 transition-colors"><Trash2 size={14}/></button>
-                      </>}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                <tr><td colSpan={12} className="py-16 text-center text-sm text-ink-300 dark:text-gray-500">Loading assets…</td></tr>
+              ) : displayAssets.map(a => {
+                const isSelected = selectedAssetIds.has(a.id)
+                return (
+                  <tr key={a.id} className={`border-b border-cream-200 dark:border-gray-700 hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors cursor-pointer ${
+                    isSelected ? 'bg-brand-50/40 dark:bg-brand-900/15' : ''
+                  }`}
+                    onClick={() => navigate(`/assets/${a.id}`)}>
+                    <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
+                      <button onClick={e => toggleSelectAsset(a.id, e)} className="p-1 rounded hover:bg-cream-200 dark:hover:bg-gray-700 text-ink-500">
+                        {isSelected ? <CheckSquare size={15} className="text-brand-600" /> : <Square size={15} />}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3"><span className="text-brand-600 font-semibold text-xs">{a.asset_code}</span></td>
+                    <td className="px-4 py-3 max-w-[180px]"><span className="block truncate font-medium text-sm text-ink-900 dark:text-gray-100" title={a.name}>{a.name}</span></td>
+                    <td className="px-4 py-3"><span className="text-xs bg-cream-100 dark:bg-gray-700 text-ink-600 dark:text-gray-300 px-2 py-1 rounded-lg">{a.category || '—'}</span></td>
+                    <td className="px-4 py-3"><span className="font-mono text-xs text-ink-400 dark:text-gray-400">{a.serial_number || '—'}</span></td>
+                    <td className="px-4 py-3 text-sm font-semibold text-ink-700 dark:text-gray-200">{formatINR(a.acquisition_value)}</td>
+                    <td className="px-4 py-3 text-xs text-ink-500 dark:text-gray-400">{a.plant_name || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{a.dept_name || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-ink-600 dark:text-gray-300">{a.assigned_employee || a.employee_name || '—'}</td>
+                    <td className="px-4 py-3 text-xs text-ink-400 dark:text-gray-400">{a.created_at ? new Date(a.created_at).toLocaleDateString('en-IN') : '—'}</td>
+                    <td className="px-4 py-3"><Badge label={a.status || 'Active'}/></td>
+                    <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => navigate(`/assets/${a.id}`)} title="View Details" className="p-1.5 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-600 text-ink-400 dark:text-gray-400 transition-colors"><Eye size={14}/></button>
+                        <button onClick={e => handlePrintSingle(a, e)} title="Print Label" className="p-1.5 rounded-xl hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:text-amber-600 text-ink-400 dark:text-gray-400 transition-colors"><Printer size={14}/></button>
+                        {editable && <>
+                          <button onClick={() => openEdit(a)} title="Edit Asset" className="p-1.5 rounded-xl hover:bg-brand-50 dark:hover:bg-brand-900/20 hover:text-brand-600 text-ink-400 dark:text-gray-400 transition-colors"><Edit2 size={14}/></button>
+                          <button onClick={() => openDelete(a)} title="Delete Asset" className="p-1.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500 text-ink-400 dark:text-gray-400 transition-colors"><Trash2 size={14}/></button>
+                        </>}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
+
 
         {!loading && displayAssets.length === 0 && (
           <div className="py-16 text-center text-ink-300 dark:text-gray-500">
@@ -535,22 +639,25 @@ export default function Assets() {
         </div>
       </Modal>
 
-      {/* ── Delete Modal ───────────────────────────────────────── */}
-      <Modal isOpen={modalType==='delete'} onClose={closeModal} title="Delete Asset" size="sm">
-        {selected && (
-          <div className="space-y-4">
-            <p className="text-sm text-ink-600 dark:text-gray-300">
-              Delete <strong>{selected.name}</strong> ({selected.asset_code})? This cannot be undone.
-            </p>
-            {formError && <p className="text-xs text-red-500">{formError}</p>}
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={closeModal} disabled={saving}>Cancel</Button>
-              <Button variant="danger" onClick={handleDelete} disabled={saving}>{saving ? 'Deleting…' : 'Delete Asset'}</Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      {/* ── Scan Asset Modal ───────────────────────────────────── */}
+      <ScanAssetModal
+        isOpen={isScanModalOpen}
+        onClose={() => setIsScanModalOpen(false)}
+        onOpenPrintLabel={assets => {
+          setSelectedForPrint(assets)
+          setIsPrintModalOpen(true)
+        }}
+        onOpenCreateAsset={handleOpenCreateFromScan}
+      />
+
+      {/* ── Print Labels Modal ──────────────────────────────────── */}
+      <PrintLabelsModal
+        isOpen={isPrintModalOpen}
+        onClose={() => setIsPrintModalOpen(false)}
+        initialAssets={selectedForPrint}
+      />
 
     </div>
   )
 }
+
