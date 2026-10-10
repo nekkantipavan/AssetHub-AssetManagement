@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Search, Download, X, FileSpreadsheet, Box } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { getAssetReport, getPlants, getDepartments } from '../data/api'
+import Pagination from '../components/common/Pagination'
 
 const formatINR = v =>
   v == null || v === '' ? '—'
@@ -32,6 +33,10 @@ export default function AssetReport() {
   const [filterDept,  setFilterDept]  = useState('All')
   const [filterStatus,setFilterStatus]= useState('All')
 
+  // Pagination states (50 multiplier options)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize,    setPageSize]    = useState(50)
+
   useEffect(() => {
     Promise.all([
       getAssetReport().catch(() => ({ data: [] })),
@@ -47,6 +52,11 @@ export default function AssetReport() {
       })
       .catch(() => setLoading(false))
   }, [])
+
+  // Reset to first page when any search/filter changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [search, filterPlant, filterCat, filterDept, filterStatus])
 
   const plantOptions    = ['All', ...(Array.isArray(plants) ? plants.map(p => p.name) : [])]
   const categoryOptions = ['All', ...new Set((Array.isArray(assets) ? assets : []).map(a => a.category).filter(Boolean))]
@@ -69,6 +79,17 @@ export default function AssetReport() {
         (filterStatus === 'All' || a.status     === filterStatus)
     })
   }, [assets, search, filterPlant, filterCat, filterDept, filterStatus])
+
+  // Pagination calculation for front-page view
+  const totalRecords = filtered.length
+  const totalPages = Math.ceil(totalRecords / pageSize) || 1
+  const validCurrentPage = Math.min(Math.max(currentPage, 1), totalPages)
+
+  const displayedAssets = useMemo(() => {
+    const start = (validCurrentPage - 1) * pageSize
+    return filtered.slice(start, start + pageSize)
+  }, [filtered, validCurrentPage, pageSize])
+
 
   const hasFilter = search || filterPlant !== 'All' || filterCat !== 'All' || filterDept !== 'All' || filterStatus !== 'All'
 
@@ -263,7 +284,11 @@ export default function AssetReport() {
         <div className="px-6 py-4 border-b border-cream-200 dark:border-gray-700 flex items-center justify-between">
           <div>
             <h3 className="text-sm font-bold text-ink-900 dark:text-gray-100">Asset Inventory</h3>
-            <p className="text-xs text-ink-300 dark:text-gray-400">{filtered.length} of {assets.length} records</p>
+            <p className="text-xs text-ink-300 dark:text-gray-400">
+              {totalRecords > 0
+                ? `Showing ${((validCurrentPage - 1) * pageSize) + 1}–${Math.min(validCurrentPage * pageSize, totalRecords)} of ${totalRecords} matching records (Page ${validCurrentPage} of ${totalPages})`
+                : '0 records'}
+            </p>
           </div>
         </div>
 
@@ -285,7 +310,7 @@ export default function AssetReport() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((a, idx) => (
+              {displayedAssets.map((a, idx) => (
                 <tr key={a.id} className={`border-b border-cream-100 dark:border-gray-700 hover:bg-cream-50 dark:hover:bg-gray-750 transition-colors ${idx % 2 === 1 ? 'bg-cream-50/40' : ''}`}>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <span className="text-brand-600 font-bold text-xs font-mono">{a.asset_code}</span>
@@ -341,13 +366,26 @@ export default function AssetReport() {
           </table>
         </div>
 
-        {filtered.length === 0 && (
+        {totalRecords === 0 && (
           <div className="py-16 text-center text-ink-300 dark:text-gray-500">
             <Box size={32} className="mx-auto mb-2 opacity-30" />
             <p className="text-sm">{assets.length === 0 ? 'No assets found.' : 'No assets match the selected filters.'}</p>
           </div>
         )}
       </div>
+
+      {/* Pagination Controls with 50 Multiplier Options */}
+      {totalRecords > 0 && (
+        <Pagination
+          totalItems={totalRecords}
+          currentPage={validCurrentPage}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={sz => { setPageSize(sz); setCurrentPage(1) }}
+          pageSizeOptions={[50, 100, 150, 200, 250, 500]}
+        />
+      )}
     </div>
   )
 }
+
