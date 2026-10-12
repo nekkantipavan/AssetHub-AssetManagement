@@ -49,6 +49,7 @@ function stripSensitive(val) {
 }
 app.use((req, res, next) => {
   const origJson = res.json.bind(res)
+  res._origJson = origJson            // keep a handle so heavy endpoints can skip stripSensitive
   res.json = body => origJson(stripSensitive(body))
   next()
 })
@@ -3519,7 +3520,9 @@ app.get('/api/reports/assets', authMiddleware, requireRole('Admin', 'Manager'), 
       LEFT JOIN asset_masters ccm ON ccm.type = 'cost_center' AND ccm.value = a.cost_center
       ORDER BY a.created_at DESC
     `)
-    res.json(r.rows)
+    // Bypass stripSensitive deep-clone — this query returns no sensitive fields,
+    // and deep-cloning thousands of rows blocks the event loop causing "page not responding".
+    res._origJson(r.rows)
   } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 

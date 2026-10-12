@@ -42,6 +42,7 @@ jobs:
         run: |
           Set-Location server
           node -e "const fs = require('fs'); if (fs.existsSync('./.env')) { require('dotenv').config(); } const pool = require('./db'); const sql = fs.readFileSync('./migrations/010_create_challan_documents.sql', 'utf8'); pool.query(sql).then(() => { console.log('[OK] Migration 010 complete'); process.exit(0); }).catch(e => { console.log('Migration status:', e.message); process.exit(0); });"
+          node -e "const fs = require('fs'); if (fs.existsSync('./.env')) { require('dotenv').config(); } const pool = require('./db'); const sql = fs.readFileSync('./migrations/011_report_performance_indexes.sql', 'utf8'); pool.query(sql).then(() => { console.log('[OK] Migration 011 complete'); process.exit(0); }).catch(e => { console.log('Migration status:', e.message); process.exit(0); });"
 
       - name: Build Frontend Production Assets
         run: |
