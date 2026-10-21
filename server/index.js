@@ -1,9 +1,13 @@
+const path = require('path')
+require('dotenv').config({ path: path.resolve(__dirname, '.env') })
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') })
+require('dotenv').config()
+
 const express = require('express')
 const cors    = require('cors')
 const pool    = require('./db')
 const bcrypt  = require('bcrypt')
 const jwt     = require('jsonwebtoken')
-require('dotenv').config()
 const { sendHtml, buildApprovalEmail, buildReturnApprovalEmail, buildApprovalResultHtml, buildChallanTable, buildAssetRequestApprovalEmail } = require('./emailService')
 const crypto = require('crypto')
 const ASSET_FIELD_SPEC = require('./assetFieldSpec')
@@ -3745,7 +3749,6 @@ app.put('/api/role-permissions', authMiddleware, requireRole('Admin'), async (re
 // CHALLAN DOCUMENTS & REPOSITORY (Month-Based Archiving)
 // ════════════════════════════════════════════════════════════
 
-const path   = require('path')
 const fs     = require('fs')
 const multer = require('multer')
 

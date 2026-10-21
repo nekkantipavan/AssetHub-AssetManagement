@@ -4,8 +4,12 @@
 // that Outlook strips), adds return approval email + embeds the
 // delivery challan as an HTML table inside both emails.
 // ============================================================
-const nodemailer = require('nodemailer')
+const path = require('path')
+require('dotenv').config({ path: path.resolve(__dirname, '.env') })
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') })
 require('dotenv').config()
+
+const nodemailer = require('nodemailer')
 
 // HTML-escape any user-supplied value before interpolating it into email markup.
 // Prevents HTML/script injection via asset names, notes, reasons, etc.
