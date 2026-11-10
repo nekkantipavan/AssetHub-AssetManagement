@@ -2,32 +2,34 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import ProtectedRoute from './components/layout/ProtectedRoute'
 import Layout from './components/layout/Layout'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
+import PageState from './components/common/PageState'
+import RouteBoundary from './components/common/RouteBoundary'
 
-import Login              from './pages/Login'
-import ForceChangePassword from './pages/ForceChangePassword'
-import Dashboard          from './pages/Dashboard'
-import Assets             from './pages/Assets'
-import AssetDetail        from './pages/AssetDetail'
-import BulkUpload         from './pages/BulkUpload'
-import Transfer           from './pages/Transfer'
-import NewTransfer        from './pages/NewTransfer'
-import TransferDetail     from './pages/TransferDetail'
-import ReturnProcessing   from './pages/ReturnProcessing'
-import AssetRequests      from './pages/AssetRequests'
-import NewAssetRequest    from './pages/NewAssetRequest'
-import AssetRequestDetail from './pages/AssetRequestDetail'
-import Plants             from './pages/Plants'
-import Departments        from './pages/Departments'
-import MastersManagement  from './pages/MastersManagement'
-import EmailMasters       from './pages/EmailMasters'
-import Users              from './pages/Users'
-import AuditLogs          from './pages/AuditLogs'
-import AssetReport        from './pages/AssetReport'
-import TransferReport     from './pages/TransferReport'
-import RoleManagement     from './pages/RoleManagement'
-import ChallanSettings    from './pages/ChallanSettings'
-import ChallanRepository  from './pages/ChallanRepository'
+const Login = lazy(() => import('./pages/Login'))
+const ForceChangePassword = lazy(() => import('./pages/ForceChangePassword'))
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Assets = lazy(() => import('./pages/Assets'))
+const AssetDetail = lazy(() => import('./pages/AssetDetail'))
+const BulkUpload = lazy(() => import('./pages/BulkUpload'))
+const Transfer = lazy(() => import('./pages/Transfer'))
+const NewTransfer = lazy(() => import('./pages/NewTransfer'))
+const TransferDetail = lazy(() => import('./pages/TransferDetail'))
+const ReturnProcessing = lazy(() => import('./pages/ReturnProcessing'))
+const AssetRequests = lazy(() => import('./pages/AssetRequests'))
+const NewAssetRequest = lazy(() => import('./pages/NewAssetRequest'))
+const AssetRequestDetail = lazy(() => import('./pages/AssetRequestDetail'))
+const Plants = lazy(() => import('./pages/Plants'))
+const Departments = lazy(() => import('./pages/Departments'))
+const MastersManagement = lazy(() => import('./pages/MastersManagement'))
+const EmailMasters = lazy(() => import('./pages/EmailMasters'))
+const Users = lazy(() => import('./pages/Users'))
+const AuditLogs = lazy(() => import('./pages/AuditLogs'))
+const AssetReport = lazy(() => import('./pages/AssetReport'))
+const TransferReport = lazy(() => import('./pages/TransferReport'))
+const RoleManagement = lazy(() => import('./pages/RoleManagement'))
+const ChallanSettings = lazy(() => import('./pages/ChallanSettings'))
+const ChallanRepository = lazy(() => import('./pages/ChallanRepository'))
 
 // Pages that go inside the Layout (sidebar + header)
 const pages = [
@@ -119,7 +121,7 @@ export default function App() {
   return (
     <AuthProvider>
       <div className="bg-cream-50 border-cream-200 dark:border-gray-700 dark:bg-gray-900 dark:text-white min-h-screen">
-        <AppRoutes />
+        <RouteBoundary><Suspense fallback={<PageState label="Loading page…"/>}><AppRoutes /></Suspense></RouteBoundary>
       </div>
     </AuthProvider>
   )

@@ -1,0 +1,586 @@
+{
+  "database": "asset_bench_b404581bef18",
+  "total": 100000,
+  "apiPort": 3301,
+  "imports": [
+    {
+      "batch": 1,
+      "rows": 5000,
+      "previewMs": 704,
+      "applyMs": 4467,
+      "previewBytes": 11518603
+    },
+    {
+      "batch": 2,
+      "rows": 5000,
+      "previewMs": 805,
+      "applyMs": 4661,
+      "previewBytes": 11533465
+    },
+    {
+      "batch": 3,
+      "rows": 5000,
+      "previewMs": 611,
+      "applyMs": 6319,
+      "previewBytes": 11553245
+    },
+    {
+      "batch": 4,
+      "rows": 5000,
+      "previewMs": 903,
+      "applyMs": 7294,
+      "previewBytes": 11553461
+    },
+    {
+      "batch": 5,
+      "rows": 5000,
+      "previewMs": 917,
+      "applyMs": 5361,
+      "previewBytes": 11553245
+    },
+    {
+      "batch": 6,
+      "rows": 5000,
+      "previewMs": 538,
+      "applyMs": 5666,
+      "previewBytes": 11553461
+    },
+    {
+      "batch": 7,
+      "rows": 5000,
+      "previewMs": 863,
+      "applyMs": 4476,
+      "previewBytes": 11553241
+    },
+    {
+      "batch": 8,
+      "rows": 5000,
+      "previewMs": 625,
+      "applyMs": 4857,
+      "previewBytes": 11553245
+    },
+    {
+      "batch": 9,
+      "rows": 5000,
+      "previewMs": 766,
+      "applyMs": 5410,
+      "previewBytes": 11553249
+    },
+    {
+      "batch": 10,
+      "rows": 5000,
+      "previewMs": 674,
+      "applyMs": 5967,
+      "previewBytes": 11553457
+    },
+    {
+      "batch": 11,
+      "rows": 5000,
+      "previewMs": 629,
+      "applyMs": 5142,
+      "previewBytes": 11553249
+    },
+    {
+      "batch": 12,
+      "rows": 5000,
+      "previewMs": 822,
+      "applyMs": 6070,
+      "previewBytes": 11553457
+    },
+    {
+      "batch": 13,
+      "rows": 5000,
+      "previewMs": 952,
+      "applyMs": 8313,
+      "previewBytes": 11553249
+    },
+    {
+      "batch": 14,
+      "rows": 5000,
+      "previewMs": 558,
+      "applyMs": 8160,
+      "previewBytes": 11553453
+    },
+    {
+      "batch": 15,
+      "rows": 5000,
+      "previewMs": 1026,
+      "applyMs": 5633,
+      "previewBytes": 11553033
+    },
+    {
+      "batch": 16,
+      "rows": 5000,
+      "previewMs": 662,
+      "applyMs": 5454,
+      "previewBytes": 11553457
+    },
+    {
+      "batch": 17,
+      "rows": 5000,
+      "previewMs": 938,
+      "applyMs": 5762,
+      "previewBytes": 11553249
+    },
+    {
+      "batch": 18,
+      "rows": 5000,
+      "previewMs": 611,
+      "applyMs": 4351,
+      "previewBytes": 11553459
+    },
+    {
+      "batch": 19,
+      "rows": 5000,
+      "previewMs": 748,
+      "applyMs": 3742,
+      "previewBytes": 11543247
+    },
+    {
+      "batch": 20,
+      "rows": 5000,
+      "previewMs": 637,
+      "applyMs": 6243,
+      "previewBytes": 11553465
+    }
+  ],
+  "validation": {
+    "unchanged": 2,
+    "duplicateRejected": true,
+    "invalidDateRejected": true,
+    "updated": 5000,
+    "updatePreviewMs": 212,
+    "updateApplyMs": 3412,
+    "linkedSubAssets": 10000
+  },
+  "profiles": {
+    "1": {
+      "list": {
+        "samples": 30,
+        "p50": 336,
+        "p95": 418,
+        "maxBytes": 20882
+      },
+      "report": {
+        "samples": 30,
+        "p50": 741,
+        "p95": 901,
+        "maxBytes": 43176
+      },
+      "lastPage": {
+        "samples": 30,
+        "p50": 754,
+        "p95": 928,
+        "maxBytes": 20486
+      },
+      "code": {
+        "samples": 30,
+        "p50": 1097,
+        "p95": 1158,
+        "maxBytes": 1759
+      },
+      "serial": {
+        "samples": 30,
+        "p50": 1020,
+        "p95": 1053,
+        "maxBytes": 931
+      },
+      "name": {
+        "samples": 30,
+        "p50": 295,
+        "p95": 358,
+        "maxBytes": 20910
+      },
+      "custodian": {
+        "samples": 30,
+        "p50": 1128,
+        "p95": 1176,
+        "maxBytes": 20884
+      },
+      "combined": {
+        "samples": 30,
+        "p50": 156,
+        "p95": 285,
+        "maxBytes": 106
+      },
+      "noResults": {
+        "samples": 30,
+        "p50": 1190,
+        "p95": 1269,
+        "maxBytes": 106
+      },
+      "detail": {
+        "samples": 30,
+        "p50": 132,
+        "p95": 183,
+        "maxBytes": 3795
+      }
+    },
+    "5": {
+      "list": {
+        "samples": 30,
+        "p50": 320,
+        "p95": 531,
+        "maxBytes": 20882
+      },
+      "report": {
+        "samples": 30,
+        "p50": 1013,
+        "p95": 1513,
+        "maxBytes": 43176
+      },
+      "lastPage": {
+        "samples": 30,
+        "p50": 1128,
+        "p95": 1373,
+        "maxBytes": 20486
+      },
+      "code": {
+        "samples": 30,
+        "p50": 1745,
+        "p95": 1845,
+        "maxBytes": 1759
+      },
+      "serial": {
+        "samples": 30,
+        "p50": 1441,
+        "p95": 1680,
+        "maxBytes": 931
+      },
+      "name": {
+        "samples": 30,
+        "p50": 432,
+        "p95": 567,
+        "maxBytes": 20910
+      },
+      "custodian": {
+        "samples": 30,
+        "p50": 1901,
+        "p95": 2018,
+        "maxBytes": 20884
+      },
+      "combined": {
+        "samples": 30,
+        "p50": 182,
+        "p95": 379,
+        "maxBytes": 106
+      },
+      "noResults": {
+        "samples": 30,
+        "p50": 1872,
+        "p95": 1977,
+        "maxBytes": 106
+      },
+      "detail": {
+        "samples": 30,
+        "p50": 204,
+        "p95": 425,
+        "maxBytes": 3795
+      }
+    },
+    "10": {
+      "list": {
+        "samples": 30,
+        "p50": 439,
+        "p95": 1053,
+        "maxBytes": 20882
+      },
+      "report": {
+        "samples": 30,
+        "p50": 2109,
+        "p95": 2228,
+        "maxBytes": 43176
+      },
+      "lastPage": {
+        "samples": 30,
+        "p50": 1979,
+        "p95": 2972,
+        "maxBytes": 20486
+      },
+      "code": {
+        "samples": 30,
+        "p50": 3218,
+        "p95": 3311,
+        "maxBytes": 1759
+      },
+      "serial": {
+        "samples": 30,
+        "p50": 3016,
+        "p95": 3088,
+        "maxBytes": 931
+      },
+      "name": {
+        "samples": 30,
+        "p50": 458,
+        "p95": 2454,
+        "maxBytes": 20910
+      },
+      "custodian": {
+        "samples": 30,
+        "p50": 3317,
+        "p95": 3379,
+        "maxBytes": 20884
+      },
+      "combined": {
+        "samples": 30,
+        "p50": 159,
+        "p95": 406,
+        "maxBytes": 106
+      },
+      "noResults": {
+        "samples": 30,
+        "p50": 3554,
+        "p95": 3681,
+        "maxBytes": 106
+      },
+      "detail": {
+        "samples": 30,
+        "p50": 724,
+        "p95": 830,
+        "maxBytes": 3795
+      }
+    },
+    "duringImport": {
+      "list": {
+        "samples": 30,
+        "p50": 472,
+        "p95": 780,
+        "maxBytes": 20843
+      },
+      "filter": {
+        "samples": 30,
+        "p50": 232,
+        "p95": 491,
+        "maxBytes": 20884
+      }
+    }
+  },
+  "photos": {
+    "assetId": 1,
+    "count": 3,
+    "thumbnailBytes": 246,
+    "fullBytes": 3134,
+    "detailBytesBefore": 3795,
+    "detailBytesAfter": 3795,
+    "detailWithPhotos": {
+      "samples": 30,
+      "p50": 233,
+      "p95": 300,
+      "maxBytes": 3795
+    },
+    "metadataBytes": 355,
+    "invalidRejected": true,
+    "unauthenticatedRejected": true,
+    "crossAssetRejected": true,
+    "readOnlyUploadRejected": true
+  },
+  "optimized": {
+    "preparation": "Migration 013 plus VACUUM (ANALYZE) on assets and audit logs",
+    "profiles": {
+      "1": {
+        "list": {
+          "samples": 30,
+          "p50": 79,
+          "p95": 245,
+          "maxBytes": 20882
+        },
+        "report": {
+          "samples": 30,
+          "p50": 117,
+          "p95": 213,
+          "maxBytes": 43176
+        },
+        "lastPage": {
+          "samples": 30,
+          "p50": 138,
+          "p95": 259,
+          "maxBytes": 20486
+        },
+        "code": {
+          "samples": 30,
+          "p50": 40,
+          "p95": 71,
+          "maxBytes": 1759
+        },
+        "serial": {
+          "samples": 30,
+          "p50": 22,
+          "p95": 37,
+          "maxBytes": 931
+        },
+        "name": {
+          "samples": 30,
+          "p50": 198,
+          "p95": 243,
+          "maxBytes": 20910
+        },
+        "custodian": {
+          "samples": 30,
+          "p50": 127,
+          "p95": 144,
+          "maxBytes": 20884
+        },
+        "combined": {
+          "samples": 30,
+          "p50": 52,
+          "p95": 56,
+          "maxBytes": 106
+        },
+        "combinedWithMatches": {
+          "samples": 30,
+          "p50": 9,
+          "p95": 13,
+          "maxBytes": 20867
+        },
+        "noResults": {
+          "samples": 30,
+          "p50": 5,
+          "p95": 7,
+          "maxBytes": 106
+        },
+        "detail": {
+          "samples": 30,
+          "p50": 6,
+          "p95": 20,
+          "maxBytes": 3795
+        }
+      },
+      "5": {
+        "list": {
+          "samples": 30,
+          "p50": 81,
+          "p95": 178,
+          "maxBytes": 20882
+        },
+        "report": {
+          "samples": 30,
+          "p50": 75,
+          "p95": 171,
+          "maxBytes": 43176
+        },
+        "lastPage": {
+          "samples": 30,
+          "p50": 84,
+          "p95": 180,
+          "maxBytes": 20486
+        },
+        "code": {
+          "samples": 30,
+          "p50": 12,
+          "p95": 15,
+          "maxBytes": 1759
+        },
+        "serial": {
+          "samples": 30,
+          "p50": 10,
+          "p95": 14,
+          "maxBytes": 931
+        },
+        "name": {
+          "samples": 30,
+          "p50": 59,
+          "p95": 146,
+          "maxBytes": 20910
+        },
+        "custodian": {
+          "samples": 30,
+          "p50": 35,
+          "p95": 132,
+          "maxBytes": 20884
+        },
+        "combined": {
+          "samples": 30,
+          "p50": 76,
+          "p95": 87,
+          "maxBytes": 106
+        },
+        "combinedWithMatches": {
+          "samples": 30,
+          "p50": 12,
+          "p95": 19,
+          "maxBytes": 20867
+        },
+        "noResults": {
+          "samples": 30,
+          "p50": 9,
+          "p95": 12,
+          "maxBytes": 106
+        },
+        "detail": {
+          "samples": 30,
+          "p50": 9,
+          "p95": 92,
+          "maxBytes": 3795
+        }
+      },
+      "10": {
+        "list": {
+          "samples": 30,
+          "p50": 79,
+          "p95": 171,
+          "maxBytes": 20882
+        },
+        "report": {
+          "samples": 30,
+          "p50": 86,
+          "p95": 168,
+          "maxBytes": 43176
+        },
+        "lastPage": {
+          "samples": 30,
+          "p50": 100,
+          "p95": 165,
+          "maxBytes": 20486
+        },
+        "code": {
+          "samples": 30,
+          "p50": 21,
+          "p95": 31,
+          "maxBytes": 1759
+        },
+        "serial": {
+          "samples": 30,
+          "p50": 17,
+          "p95": 24,
+          "maxBytes": 931
+        },
+        "name": {
+          "samples": 30,
+          "p50": 95,
+          "p95": 356,
+          "maxBytes": 20910
+        },
+        "custodian": {
+          "samples": 30,
+          "p50": 53,
+          "p95": 183,
+          "maxBytes": 20884
+        },
+        "combined": {
+          "samples": 30,
+          "p50": 66,
+          "p95": 122,
+          "maxBytes": 106
+        },
+        "combinedWithMatches": {
+          "samples": 30,
+          "p50": 22,
+          "p95": 27,
+          "maxBytes": 20867
+        },
+        "noResults": {
+          "samples": 30,
+          "p50": 20,
+          "p95": 25,
+          "maxBytes": 106
+        },
+        "detail": {
+          "samples": 30,
+          "p50": 28,
+          "p95": 46,
+          "maxBytes": 3795
+        }
+      }
+    }
+  }
+}

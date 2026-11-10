@@ -10,6 +10,7 @@ import { Badge } from '../components/common/Badge'
 import { useAuth } from '../context/AuthContext'
 import { getAsset, deleteAsset } from '../data/api'
 import PrintLabelsModal from '../components/labels/PrintLabelsModal'
+import AssetPhotos from '../components/common/AssetPhotos'
 
 const formatINR = v =>
   v == null || v === '' ? '—'
@@ -99,7 +100,7 @@ export default function AssetDetail() {
     <div className="space-y-5">
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/assets')}
@@ -147,7 +148,7 @@ export default function AssetDetail() {
 
 
       {/* Body: 3-column grid */}
-      <div className="grid grid-cols-3 gap-5 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
 
         {/* ── Left: Asset Information ─────────────────────────── */}
         <div className="col-span-1 space-y-4">
@@ -212,7 +213,7 @@ export default function AssetDetail() {
         </div>
 
         {/* ── Right 2/3: Summary + Timeline ───────────────────── */}
-        <div className="col-span-2 space-y-4">
+        <div className="lg:col-span-2 space-y-4 min-w-0">
 
           {/* Quick Summary */}
           <div className="grid grid-cols-3 gap-3">
@@ -238,6 +239,8 @@ export default function AssetDetail() {
               )}
             </div>
           </div>
+
+          <AssetPhotos key={asset.id} assetId={asset.id} canEdit={editable}/>
 
           {/* Timeline */}
           <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-card p-6">

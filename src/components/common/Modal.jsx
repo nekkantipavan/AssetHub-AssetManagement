@@ -1,45 +1,32 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useId } from 'react'
 import { X } from 'lucide-react'
 import clsx from 'clsx'
 
 export default function Modal({ isOpen, onClose, title, children, size = 'md' }) {
+  const dialog = useRef()
+  const close = useRef(onClose)
+  close.current = onClose
+  const titleId = useId()
   useEffect(() => {
-    if (isOpen) document.body.style.overflow = 'hidden'
-    else document.body.style.overflow = ''
-    return () => { document.body.style.overflow = '' }
+    const node = dialog.current
+    if (isOpen && !node.open) {
+      node.showModal()
+      node.querySelector('input:not([type="hidden"]), textarea, select')?.focus()
+    }
+    if (!isOpen && node.open) node.close()
+    return () => { if (node.open) node.close() }
   }, [isOpen])
-
-  if (!isOpen) return null
-
-  const sizes = {
-    sm: 'max-w-md',
-    md: 'max-w-xl',
-    lg: 'max-w-3xl',
-    xl: 'max-w-5xl',
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(46,46,46,0.4)', backdropFilter: 'blur(4px)' }}
-      onClick={e => e.target === e.currentTarget && onClose()}
-    >
-      <div className={clsx('bg-white dark:bg-gray-800 rounded-3xl shadow-medium w-full flex flex-col max-h-[90vh]', sizes[size])}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-cream-200 flex-shrink-0">
-          <h2 className="text-base font-bold border-cream-200 dark:border-gray-700">{title}</h2>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-xl hover:bg-cream-100 dark:bg-gray-800 flex items-center justify-center transition-colors"
-          >
-            <X size={16} className="text-ink-500" />
-          </button>
-        </div>
-        {/* Body */}
-        <div className="overflow-y-auto flex-1 px-6 py-5">
-          {children}
-        </div>
+  const sizes = { sm:'max-w-md', md:'max-w-xl', lg:'max-w-3xl', xl:'max-w-5xl' }
+  return <dialog ref={dialog} aria-labelledby={titleId}
+    onCancel={e => { e.preventDefault(); close.current() }}
+    onClick={e => { if (e.target === e.currentTarget) close.current() }}
+    className={clsx('m-auto w-[calc(100%-2rem)] border-0 p-0 rounded-3xl bg-white dark:bg-gray-800 text-ink-900 dark:text-gray-100 shadow-medium backdrop:bg-black/40 backdrop:backdrop-blur-sm', sizes[size])}>
+    <div className="flex flex-col max-h-[90dvh]">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-cream-200 dark:border-gray-700 flex-shrink-0">
+        <h2 id={titleId} className="text-base font-bold">{title}</h2>
+        <button type="button" aria-label="Close dialog" onClick={() => close.current()} className="w-9 h-9 rounded-xl hover:bg-cream-100 dark:hover:bg-gray-700 flex items-center justify-center"><X size={16}/></button>
       </div>
+      <div className="overflow-y-auto flex-1 px-6 py-5">{isOpen && children}</div>
     </div>
-  )
+  </dialog>
 }

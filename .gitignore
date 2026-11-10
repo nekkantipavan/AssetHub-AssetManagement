@@ -12,6 +12,8 @@ dist/
 *.log
 server/server.err.log
 server/server.out.log
+server/private-asset-photos/
+.asset-benchmark/
 
 # OS files
 .DS_Store

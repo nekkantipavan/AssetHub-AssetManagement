@@ -55,7 +55,7 @@ function NavItem({ item }) {
   )
 }
 
-export default function Sidebar() {
+export default function Sidebar({ open = false, onClose = () => {} }) {
   const { user, logout, canAccess } = useAuth()
   const navigate  = useNavigate()
   const location  = useLocation()
@@ -75,7 +75,7 @@ export default function Sidebar() {
   const initials = user?.name?.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() || '??'
 
   return (
-    <aside className="w-56 flex-shrink-0 bg-white dark:bg-gray-800 flex flex-col shadow-soft overflow-y-auto border-r border-cream-200 dark:border-gray-700">
+    <aside aria-label="Main navigation" onClick={e => { if (e.target.closest('a')) onClose() }} className={clsx("fixed inset-y-0 left-0 z-40 md:static w-56 flex-shrink-0 bg-white dark:bg-gray-800 flex flex-col shadow-soft overflow-y-auto border-r border-cream-200 dark:border-gray-700 transition-transform", open ? "translate-x-0" : "-translate-x-full md:translate-x-0")}>
       {/* Logo */}
       <div className="px-5 py-4 border-b border-cream-200 dark:border-gray-700">
         <div className="flex items-center gap-2.5">

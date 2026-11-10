@@ -1,3 +1,4 @@
+import GlobalSearch from './GlobalSearch'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Search, Bell, ChevronDown, LogOut, KeyRound, CheckCheck, CheckCircle, XCircle, RotateCcw } from 'lucide-react'
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -185,22 +186,14 @@ export default function Header() {
 
   return (
     <>
-      <header className="bg-white dark:bg-gray-800 border-b border-cream-200 dark:border-gray-700 px-6 py-3 flex items-center justify-between flex-shrink-0 relative z-20">
+      <header className="bg-white dark:bg-gray-800 border-b border-cream-200 dark:border-gray-700 px-3 sm:px-6 py-3 flex items-center justify-between gap-2 flex-shrink-0 relative z-20">
         <div>
           <h1 className="text-base font-bold dark:text-white leading-none">{page.title}</h1>
           <p className="text-xs text-ink-300 dark:text-gray-400 mt-0.5">{page.sub || `Welcome, ${user?.name?.split(' ')[0]}`}</p>
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Search */}
-          <div className="relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-300 dark:text-gray-400"/>
-            <input
-              type="text"
-              placeholder="Search assets, plants…"
-              className="pl-9 pr-4 py-2 bg-cream-100 dark:bg-gray-700 rounded-2xl text-sm dark:text-white placeholder-ink-300 focus:outline-none focus:ring-2 focus:ring-brand-300 w-52 transition-all"
-            />
-          </div>
+          <GlobalSearch />
 
           {/* Notifications bell */}
           {canViewNotifs && (
@@ -238,7 +231,7 @@ export default function Header() {
               <div className="w-7 h-7 rounded-xl bg-orange-gradient flex items-center justify-center text-white text-xs font-bold">
                 {initials}
               </div>
-              <div className="text-left">
+              <div className="text-left hidden sm:block">
                 <p className="text-xs font-semibold dark:text-white leading-none">{user?.name}</p>
                 <span className={clsx('text-xs font-medium px-1 rounded', roleColors[user?.role])}>{user?.role}</span>
               </div>

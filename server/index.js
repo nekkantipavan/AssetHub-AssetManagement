@@ -1,13 +1,9 @@
-const path = require('path')
-require('dotenv').config({ path: path.resolve(__dirname, '.env') })
-require('dotenv').config({ path: path.resolve(__dirname, '../.env') })
-require('dotenv').config()
-
 const express = require('express')
 const cors    = require('cors')
 const pool    = require('./db')
 const bcrypt  = require('bcrypt')
 const jwt     = require('jsonwebtoken')
+require('dotenv').config()
 const { sendHtml, buildApprovalEmail, buildReturnApprovalEmail, buildApprovalResultHtml, buildChallanTable, buildAssetRequestApprovalEmail } = require('./emailService')
 const crypto = require('crypto')
 const ASSET_FIELD_SPEC = require('./assetFieldSpec')
@@ -27,7 +23,7 @@ app.use((req, res, next) => {
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'"
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'"
   )
   next()
 })
@@ -153,6 +149,18 @@ function requireRole(...roles) {
     if (!roles.includes(req.user.role))
       return res.status(403).json({ error: 'Insufficient permissions' })
     next()
+  }
+}
+
+// Match page visibility for read/search endpoints; identifiers are fixed by callers.
+function requirePage(page, edit = false) {
+  return async (req, res, next) => {
+    if (req.user.role === 'Admin') return next()
+    try {
+      const r = await pool.query('SELECT access FROM role_permissions WHERE role=$1 AND page=$2',[req.user.role,page])
+      if (!(edit ? ['true'] : ['true', 'view']).includes(r.rows[0]?.access)) return res.status(403).json({error:'Insufficient permissions'})
+      next()
+    } catch { res.status(500).json({error:'Could not check permissions'}) }
   }
 }
 
@@ -641,109 +649,11 @@ app.post('/api/test-email', authMiddleware, requireRole('Admin'), async (req, re
 // ASSETS
 // ════════════════════════════════════════════════════════════
 
-app.get('/api/assets', authMiddleware, async (req, res) => {
-  try {
-    const page     = Math.max(parseInt(req.query.page) || 1, 1)
-    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 25, 1), 500)
-    const offset   = (page - 1) * pageSize
-    const search   = (req.query.search || '').trim()
-    const status   = (req.query.status || '').trim()
-    const deptId   = (req.query.dept_id || '').trim()
-    const category = (req.query.category || '').trim()
+app.get('/api/assets', authMiddleware, requirePage('assets'), require('./assetRead').assetReadHandler(pool))
 
-    const conditions = []
-    const params     = []
-    let paramIdx     = 1
-
-    if (search) {
-      const like = `%${search}%`
-      conditions.push(`(
-        a.name              ILIKE $${paramIdx}
-        OR a.asset_code     ILIKE $${paramIdx}
-        OR a.serial_number  ILIKE $${paramIdx}
-        OR a.assigned_employee ILIKE $${paramIdx}
-        OR u.name           ILIKE $${paramIdx}
-        OR a.category       ILIKE $${paramIdx}
-      )`)
-      params.push(like)
-      paramIdx++
-    }
-    if (status) {
-      conditions.push(`a.status = $${paramIdx}`)
-      params.push(status)
-      paramIdx++
-    }
-    if (deptId) {
-      conditions.push(`a.dept_id = $${paramIdx}`)
-      params.push(parseInt(deptId))
-      paramIdx++
-    }
-    if (category) {
-      conditions.push(`a.category = $${paramIdx}`)
-      params.push(category)
-      paramIdx++
-    }
-
-    const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''
-
-    const countQuery = `SELECT COUNT(*)::int FROM assets a
-      LEFT JOIN users u ON a.assigned_user_id = u.id
-      ${whereClause}`
-
-    const dataQuery = `
-      SELECT
-        a.id,
-        a.asset_code,
-        a.sub_sequence,
-        a.parent_asset_id,
-        a.asset_code || ' ' || a.sub_sequence  AS sub_asset_code,
-        a.name,
-        a.serial_number,
-        a.acquisition_value,
-        a.category,
-        a.asset_class,
-        a.company_code,
-        a.cost_center,
-        a.reference_invoice_no,
-        a.fiscal_year,
-        a.assigned_employee,
-        a.date_of_purchase,
-        a.warranty_date,
-        a.make,
-        a.supplier_name,
-        a.asset_status,
-        a.notes,
-        a.plant_id,
-        a.dept_id,
-        a.assigned_user_id,
-        a.status,
-        a.created_at,
-        a.updated_at,
-        p.name  AS plant_name,
-        p.code  AS plant_code,
-        d.name  AS dept_name,
-        u.name  AS employee_name
-      FROM assets a
-      LEFT JOIN plants p      ON a.plant_id        = p.id
-      LEFT JOIN departments d ON a.dept_id          = d.id
-      LEFT JOIN users u       ON a.assigned_user_id = u.id
-      ${whereClause}
-      ORDER BY a.created_at DESC
-      LIMIT $${paramIdx} OFFSET $${paramIdx + 1}
-    `
-
-    const [countRes, dataRes] = await Promise.all([
-      pool.query(countQuery, params),
-      pool.query(dataQuery, [...params, pageSize, offset]),
-    ])
-
-    res.json({
-      data:     dataRes.rows,
-      total:    countRes.rows[0].count,
-      page,
-      pageSize,
-    })
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+const cleanupAssetPhoto = require('./assetPhotos').registerAssetPhotos(app, {
+  pool, authMiddleware, read: requirePage('assets'),
+  edit: [requireRole('Admin', 'Manager'), requirePage('assets', true)],
 })
 
 // Lightweight endpoint for filter dropdown options (distinct values)
@@ -764,7 +674,7 @@ app.get('/api/assets/filter-options', authMiddleware, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
-app.get('/api/assets/:id', authMiddleware, async (req, res) => {
+app.get('/api/assets/:id', authMiddleware, requirePage('assets'), async (req, res) => {
   try {
     const { id } = req.params
     const assetRes = await pool.query(`
@@ -1089,13 +999,29 @@ app.put('/api/assets/:id', authMiddleware, requireRole('Admin','Manager'), async
 })
 
 app.delete('/api/assets/:id', authMiddleware, requireRole('Admin'), async (req, res) => {
+  let db
   try {
     const { id } = req.params
-    const r = await pool.query('DELETE FROM assets WHERE id=$1 RETURNING id, asset_code', [id])
-    if (!r.rows.length) return res.status(404).json({ error: 'Asset not found' })
+    db = await pool.connect()
+    await db.query('BEGIN')
+    const asset = await db.query('SELECT id FROM assets WHERE id=$1 FOR UPDATE', [id])
+    if (!asset.rowCount) {
+      await db.query('ROLLBACK')
+      return res.status(404).json({ error: 'Asset not found' })
+    }
+    const photos = await db.query('SELECT id FROM asset_photos WHERE asset_id=$1', [id])
+    const r = await db.query('DELETE FROM assets WHERE id=$1 RETURNING id, asset_code', [id])
+    await db.query('COMMIT')
+    db.release()
+    db = null
+    await Promise.all(photos.rows.map(photo => cleanupAssetPhoto(photo.id)))
     await writeAudit(req.user.id, 'Asset Deleted', 'Assets', `Asset ${r.rows[0].asset_code} deleted`, req.ip)
     res.status(204).send()
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
+  } catch (err) {
+    if (db) await db.query('ROLLBACK').catch(() => {})
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  } finally { db?.release() }
 })
  
 // ════════════════════════════════════════════════════════════
@@ -3152,386 +3078,28 @@ app.delete('/api/asset-masters/:id', authMiddleware, requireRole('Admin'), async
 // BULK UPLOAD
 // ════════════════════════════════════════════════════════════
 
-app.post('/api/assets/bulk', authMiddleware, requireRole('Admin', 'Manager'), async (req, res) => {
-  try {
-    const { rows } = req.body
-    if (!Array.isArray(rows) || rows.length === 0)
-      return res.status(400).json({ error: 'No rows provided' })
-
-    // ── Load reference data once for the whole batch ────────────
-    const [plantsRes, deptsRes, mastersRes] = await Promise.all([
-      pool.query('SELECT id, code, name FROM plants WHERE status=$1', ['Active']),
-      pool.query('SELECT id, code, name FROM departments WHERE status=$1', ['Active']),
-      pool.query(
-        `SELECT type, value FROM asset_masters WHERE is_active=true AND type = ANY($1)`,
-        [['category', 'asset_class', 'asset_status', 'company_code', 'cost_center']]
-      ),
-    ])
-
-    const plantMap = {}
-    plantsRes.rows.forEach(p => {
-      plantMap[p.code.trim().toLowerCase()] = p
-      plantMap[p.name.trim().toLowerCase()] = p
-    })
-
-    const deptMap = {}
-    deptsRes.rows.forEach(d => {
-      deptMap[d.name.trim().toLowerCase()] = d
-      deptMap[d.code.trim().toLowerCase()] = d
-    })
-
-    const masterSets = {}
-    mastersRes.rows.forEach(m => {
-      if (!masterSets[m.type]) masterSets[m.type] = new Set()
-      masterSets[m.type].add(m.value)
-    })
-
-    // Index spec by db name for O(1) access
-    const F = {}
-    ASSET_FIELD_SPEC.forEach(f => { F[f.db] = f })
-
-    // Resolve a cell value from a spreadsheet row using the spec's canonical name + aliases
-    function getCol(row, field) {
-      const lc = s => String(s || '').toLowerCase().trim()
-      for (const key of Object.keys(row)) {
-        if (lc(key) === lc(field.col) || field.aliases.some(a => a === lc(key)))
-          return String(row[key] ?? '').trim()
-      }
-      return ''
-    }
-
-    function parseDate(raw, fieldLabel, rowErrs) {
-      if (!raw) return null
-      const iso  = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-      if (iso) return raw
-
-      // Slash-separated: could be DD/MM/YYYY, M/D/YYYY, M/D/YY, or D/M/YY
-      const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/)
-      if (slash) {
-        let [, a, b, y] = slash
-        const yr = y.length === 2 ? 2000 + parseInt(y) : parseInt(y)
-        const av = parseInt(a), bv = parseInt(b)
-        let mm, dd
-        if (bv > 12) {
-          // b is definitely the day → M/D format (Excel US locale)
-          mm = String(av).padStart(2, '0')
-          dd = String(bv).padStart(2, '0')
-        } else {
-          // a > 12 means it's DD/MM; otherwise assume DD/MM (system standard)
-          dd = String(av).padStart(2, '0')
-          mm = String(bv).padStart(2, '0')
-        }
-        return `${yr}-${mm}-${dd}`
-      }
-
-      rowErrs.push({ field: fieldLabel, error: `"${raw}" must be DD/MM/YYYY` })
-      return null
-    }
-
-    // Validate one spreadsheet row; return { rowErrs, parsed }
-    function validateRow(raw) {
-      const rowErrs = []
-
-      // Required presence for every spec field except the ones with dedicated validators below
-      for (const field of ASSET_FIELD_SPEC) {
-        if (!field.required) continue
-        if (field.type === 'plant' || field.type === 'department') continue
-        if (field.db === 'sub_sequence') continue   // validated specifically (avoids double error)
-        const val = getCol(raw, field)
-        if (!val) rowErrs.push({ field: field.col, error: `${field.label} is required` })
-      }
-
-      // Sub Asset Number: required integer >= 0
-      const subRaw = getCol(raw, F.sub_sequence)
-      const subSeq = parseInt(subRaw, 10)
-      if (!subRaw) {
-        rowErrs.push({ field: 'Sub Asset Number', error: 'Sub Asset Number is required' })
-      } else if (isNaN(subSeq) || subSeq < 0) {
-        rowErrs.push({ field: 'Sub Asset Number', error: `"${subRaw}" must be 0 or a positive integer` })
-      }
-
-      // Acquisition Value: required, numeric, non-negative
-      const valueRaw = getCol(raw, F.acquisition_value)
-      let acqValue = null
-      if (valueRaw) {
-        const cleaned = valueRaw.replace(/[,₹$]/g, '')
-        if (isNaN(Number(cleaned))) {
-          rowErrs.push({ field: 'Acquisition Value', error: `"${valueRaw}" is not a valid number` })
-        } else {
-          acqValue = parseFloat(cleaned)
-          if (acqValue < 0) rowErrs.push({ field: 'Acquisition Value', error: 'Cannot be negative' })
-        }
-      }
-
-      // Status enum
-      const statusRaw = getCol(raw, F.status)
-      if (statusRaw && !['active', 'inactive'].includes(statusRaw.toLowerCase()))
-        rowErrs.push({ field: 'Status', error: `Must be Active or Inactive (got "${statusRaw}")` })
-
-      // Masters: category, asset_class, asset_status, company_code, cost_center
-      for (const field of ASSET_FIELD_SPEC.filter(f => f.master)) {
-        const val = getCol(raw, field)
-        if (!val) continue  // already caught by required check above
-        if (!masterSets[field.master]?.has(val))
-          rowErrs.push({ field: field.col, error: `"${val}" not found in ${field.label} masters` })
-      }
-
-      // Business Area Code → plant_id (code lookup)
-      const bizArea = getCol(raw, F.plant_id)
-      let plantId = null
-      if (!bizArea) {
-        rowErrs.push({ field: 'Business Area Code', error: 'Business Area Code is required' })
-      } else {
-        const matched = plantMap[bizArea.toLowerCase()]
-        if (!matched) {
-          const hint = plantsRes.rows.map(p => `${p.code} (${p.name})`).join(', ')
-          rowErrs.push({ field: 'Business Area Code', error: `"${bizArea}" not found. Valid: ${hint || 'none — add plants first'}` })
-        } else {
-          plantId = matched.id
-        }
-      }
-
-      // Department → dept_id (name or code lookup)
-      const deptName = getCol(raw, F.dept_id)
-      let deptId = null
-      if (!deptName) {
-        rowErrs.push({ field: 'Department', error: 'Department is required' })
-      } else {
-        const matched = deptMap[deptName.toLowerCase()]
-        if (!matched) {
-          const hint = deptsRes.rows.map(d => d.name).join(', ')
-          rowErrs.push({ field: 'Department', error: `"${deptName}" not found. Valid: ${hint || 'none — add departments first'}` })
-        } else {
-          deptId = matched.id
-        }
-      }
-
-      // Dates
-      const dopRaw = getCol(raw, F.date_of_purchase)
-      const warRaw = getCol(raw, F.warranty_date)
-      const dop      = parseDate(dopRaw, 'Capitalized On', rowErrs)
-      const warranty = parseDate(warRaw, 'Warranty Date', rowErrs)
-
-      return {
-        rowErrs,
-        parsed: {
-          assetCode:    getCol(raw, F.asset_code),
-          subSeq:       isNaN(subSeq) ? -1 : subSeq,
-          assetName:    getCol(raw, F.name),
-          serial:       getCol(raw, F.serial_number) || null,
-          acqValue,
-          category:     getCol(raw, F.category),
-          assetClass:   getCol(raw, F.asset_class),
-          assetStatus:  getCol(raw, F.asset_status),
-          companyCode:  getCol(raw, F.company_code),
-          costCenter:   getCol(raw, F.cost_center),
-          refInvoice:   getCol(raw, F.reference_invoice_no),
-          fiscalYear:   getCol(raw, F.fiscal_year),
-          supplierName: getCol(raw, F.supplier_name),
-          make:         getCol(raw, F.make) || null,
-          employee:     getCol(raw, F.assigned_employee),
-          note:         getCol(raw, F.notes) || null,
-          plantId, deptId,
-          status: statusRaw
-            ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1).toLowerCase()
-            : 'Active',
-          dop, warranty,
-        }
-      }
-    }
-
-    // Shared INSERT (roots use subSeq=0/parentId=null; children supply both)
-    const INSERT_SQL = `
-      INSERT INTO assets (
-        asset_code, sub_sequence, parent_asset_id,
-        name, serial_number, acquisition_value,
-        category, asset_class, company_code, cost_center,
-        reference_invoice_no, fiscal_year, supplier_name,
-        assigned_employee, make, asset_status,
-        date_of_purchase, warranty_date, notes,
-        plant_id, dept_id, status,
-        created_at, updated_at
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,NOW(),NOW())
-      RETURNING id`
-
-    const insertParams = (p, subSeq, parentId) => [
-      p.assetCode, subSeq, parentId,
-      p.assetName, p.serial, p.acqValue,
-      p.category, p.assetClass, p.companyCode, p.costCenter,
-      p.refInvoice, p.fiscalYear, p.supplierName,
-      p.employee, p.make, p.assetStatus,
-      p.dop, p.warranty, p.note,
-      p.plantId, p.deptId, p.status,
-    ]
-
-    const errors        = []
-    const validRoots    = []
-    const validChildren = []
-    const fileKeys      = new Map()   // "assetCode|subSeq" → first rowNum that claimed it
-
-    // ── Validation loop (all rows, read-only — no DB writes yet) ─
-    for (let i = 0; i < rows.length; i++) {
-      const rowNum = i + 2
-      const { rowErrs, parsed } = validateRow(rows[i])
-      if (rowErrs.length) {
-        rowErrs.forEach(e => errors.push({ row: rowNum, ...e }))
-        continue
-      }
-
-      // In-file duplicate: same Asset Code + Sub Asset Number claimed twice
-      const key = `${parsed.assetCode}|${parsed.subSeq}`
-      if (fileKeys.has(key)) {
-        errors.push({
-          row: rowNum,
-          field: 'Asset Code',
-          error: `Asset Code '${parsed.assetCode}' with Sub Asset Number ${parsed.subSeq} appears more than once in this file (first at row ${fileKeys.get(key)})`
-        })
-        continue
-      }
-      fileKeys.set(key, rowNum)
-
-      if (parsed.subSeq === 0) validRoots.push({ rowNum, parsed })
-      else                     validChildren.push({ rowNum, parsed })
-    }
-
-    // ── Cross-check every asset_code in the file against the DB in one query ─
-    const allValid   = [...validRoots, ...validChildren]
-    const fileCodes   = [...new Set(allValid.map(r => r.parsed.assetCode))]
-    const existingRes = fileCodes.length
-      ? await pool.query('SELECT asset_code, sub_sequence, id FROM assets WHERE asset_code = ANY($1)', [fileCodes])
-      : { rows: [] }
-
-    const existingRootIds = {}        // asset_code → id (only when a sub_sequence=0 row exists)
-    const existingKeySet   = new Set() // "assetCode|subSeq"
-    existingRes.rows.forEach(r => {
-      existingKeySet.add(`${r.asset_code}|${r.sub_sequence}`)
-      if (r.sub_sequence === 0) existingRootIds[r.asset_code] = r.id
-    })
-
-    for (const { rowNum, parsed } of allValid) {
-      const key = `${parsed.assetCode}|${parsed.subSeq}`
-      if (existingKeySet.has(key)) {
-        errors.push({
-          row: rowNum,
-          field: 'Asset Code',
-          error: `"${parsed.assetCode}" with Sub Asset Number ${parsed.subSeq} already exists in the system`
-        })
-      }
-    }
-
-    // Root existence check for children: must exist in this file OR already in the DB
-    const fileRootCodes = new Set(validRoots.map(r => r.parsed.assetCode))
-    for (const { rowNum, parsed } of validChildren) {
-      if (!fileRootCodes.has(parsed.assetCode) && !existingRootIds[parsed.assetCode]) {
-        errors.push({
-          row: rowNum,
-          field: 'Sub Asset Number',
-          error: `Asset Code '${parsed.assetCode}' has no root record (Sub Asset Number 0) — add it in this file or create it first.`
-        })
-      }
-    }
-
-    // ── All-or-nothing: any error anywhere blocks the entire file ─
-    if (errors.length > 0) {
-      return res.json({
-        total: rows.length,
-        valid: 0,
-        errors: errors.length,
-        errorRows: errors,
-        message: 'No rows were imported — imports are all-or-nothing. Fix the errors below and re-upload the full file.'
-      })
-    }
-
-    // ── Every row is clean — insert all of them in one transaction ─
-    const client = await pool.connect()
-    let inserted = 0
-    try {
-      await client.query('BEGIN')
-      const inFileRootMap = {}
-
-      for (const { parsed } of validRoots) {
-        const ins = await client.query(INSERT_SQL, insertParams(parsed, 0, null))
-        inFileRootMap[parsed.assetCode] = ins.rows[0].id
-        inserted++
-      }
-
-      for (const { parsed } of validChildren) {
-        const parentId = inFileRootMap[parsed.assetCode] || existingRootIds[parsed.assetCode]
-        await client.query(INSERT_SQL, insertParams(parsed, parsed.subSeq, parentId))
-        inserted++
-      }
-
-      await client.query('COMMIT')
-    } catch (dbErr) {
-      await client.query('ROLLBACK')
-      console.error('Bulk upload transaction rolled back:', dbErr)
-      client.release()
-      return res.status(500).json({ error: `Import failed and was fully rolled back: ${dbErr.message}` })
-    }
-    client.release()
-
-    await writeAudit(req.user.id, 'Bulk Upload', 'Assets',
-      `${inserted} imported (atomic), 0 errors from ${rows.length} rows`, req.ip)
-
-    res.json({ total: rows.length, valid: inserted, errors: 0, errorRows: [] })
-  } catch (err) {
-    console.error('Bulk upload error:', err)
-    res.status(500).json({ error: 'Internal server error' })
-  }
-})
+app.post('/api/assets/bulk', authMiddleware, requireRole('Admin', 'Manager'), require('./bulkAssets').bulkHandler(pool, JWT_SECRET))
 
 // ════════════════════════════════════════════════════════════
 // REPORTS
 // ════════════════════════════════════════════════════════════
 
-app.get('/api/reports/assets', authMiddleware, requireRole('Admin', 'Manager'), async (req, res) => {
-  try {
-    const r = await pool.query(`
-      SELECT
-        a.id,
-        a.asset_code,
-        a.sub_sequence,
-        a.asset_code || ' ' || a.sub_sequence  AS sub_asset_code,
-        a.name,
-        a.serial_number,
-        a.acquisition_value,
-        a.category,
-        a.asset_class,
-        a.company_code,
-        a.cost_center,
-        ccm.description                         AS cost_center_description,
-        a.assigned_employee,
-        a.make,
-        a.supplier_name,
-        a.reference_invoice_no,
-        a.fiscal_year,
-        a.asset_status,
-        a.notes,
-        a.status,
-        a.date_of_purchase,
-        a.warranty_date,
-        a.created_at,
-        a.updated_at,
-        p.name  AS plant_name,
-        p.code  AS plant_code,
-        d.name  AS dept_name,
-        u.name  AS employee_name
-      FROM assets a
-      LEFT JOIN plants p         ON a.plant_id        = p.id
-      LEFT JOIN departments d    ON a.dept_id          = d.id
-      LEFT JOIN users u          ON a.assigned_user_id = u.id
-      LEFT JOIN asset_masters ccm ON ccm.type = 'cost_center' AND ccm.value = a.cost_center
-      ORDER BY a.created_at DESC
-    `)
-    // Bypass stripSensitive deep-clone — this query returns no sensitive fields,
-    // and deep-cloning thousands of rows blocks the event loop causing "page not responding".
-    res._origJson(r.rows)
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
-})
+app.get('/api/reports/assets', authMiddleware, requireRole('Admin', 'Manager'), requirePage('reports'), require('./assetRead').assetReadHandler(pool, true))
 
-app.get('/api/reports/transfers', authMiddleware, requireRole('Admin', 'Manager'), async (req, res) => {
+app.get('/api/reports/transfers', authMiddleware, requireRole('Admin', 'Manager'), requirePage('reports'), async (req, res) => {
   try {
+    const { where, params } = require('./reportFilters').transferFilters(req.query)
+    const summary = (await pool.query(`SELECT COUNT(*)::int total,
+      COUNT(*) FILTER(WHERE t.transfer_type='Returnable')::int returnable,
+      COUNT(*) FILTER(WHERE t.transfer_type='Non-Returnable')::int non_returnable,
+      COALESCE(SUM((SELECT COUNT(*) FROM transfer_returns r WHERE r.transfer_id=t.id)),0)::int returns
+      FROM transfers t LEFT JOIN plants fp ON fp.id=t.from_plant_id LEFT JOIN plants tp ON tp.id=t.to_plant_id
+      LEFT JOIN users u ON u.id=t.initiated_by ${where}`,params)).rows[0]
+    const pageSize=Math.min(100,Math.max(1,parseInt(req.query.pageSize)||25))
+    const page=Math.min(Math.max(1,parseInt(req.query.page)||1),Math.max(1,Math.ceil(summary.total/pageSize)))
+    const exporting=req.query.export==='1'
+    if(exporting&&summary.total>5000)return res.status(413).json({error:'Narrow filters to 5,000 transfers or fewer before exporting.'})
+    const limit=exporting?'':`LIMIT $${params.length+1} OFFSET $${params.length+2}`
     const transfers = await pool.query(`
       SELECT
         t.id, t.transfer_code, t.challan_no, t.transfer_type, t.status,
@@ -3551,9 +3119,12 @@ app.get('/api/reports/transfers', authMiddleware, requireRole('Admin', 'Manager'
       LEFT JOIN users u           ON t.initiated_by  = u.id
       LEFT JOIN transfer_items ti ON ti.transfer_id  = t.id
       LEFT JOIN transfer_returns tr ON tr.transfer_id = t.id
+      ${where}
       GROUP BY t.id, fp.id, tp.id, u.id
-      ORDER BY t.created_at DESC
-    `)
+      ORDER BY t.created_at DESC, t.id DESC
+      ${limit}
+    `, exporting?params:[...params,pageSize,(page-1)*pageSize])
+    const selectedIds = transfers.rows.map(t=>t.id)
 
     const items = await pool.query(`
       SELECT
@@ -3565,8 +3136,9 @@ app.get('/api/reports/transfers', authMiddleware, requireRole('Admin', 'Manager'
       FROM transfer_items ti
       JOIN assets a ON ti.asset_id = a.id
       LEFT JOIN departments d ON a.dept_id = d.id
-      ORDER BY a.asset_code
-    `)
+      WHERE ti.transfer_id = ANY($1::int[])
+      ORDER BY a.asset_code, a.sub_sequence
+    `, [selectedIds])
 
     const returns = await pool.query(`
       SELECT
@@ -3577,9 +3149,10 @@ app.get('/api/reports/transfers', authMiddleware, requireRole('Admin', 'Manager'
         COUNT(ri.id)::int AS returned_asset_count
       FROM transfer_returns r
       LEFT JOIN return_items ri ON ri.return_id = r.id
+      WHERE r.transfer_id = ANY($1::int[])
       GROUP BY r.id
-      ORDER BY r.created_at DESC
-    `)
+      ORDER BY r.created_at DESC, r.id DESC
+    `, [selectedIds])
 
     const enrichedTransfers = await Promise.all(transfers.rows.map(async t => ({
       ...t,
@@ -3602,7 +3175,7 @@ app.get('/api/reports/transfers', authMiddleware, requireRole('Admin', 'Manager'
       returns: returnsByTransfer[t.id] || [],
     }))
 
-    res.json(result)
+    res.json({data:result,total:summary.total,page,pageSize,summary})
   } catch (err) { console.error(err); res.status(500).json({ error: 'Internal server error' }) }
 })
 
@@ -3749,6 +3322,7 @@ app.put('/api/role-permissions', authMiddleware, requireRole('Admin'), async (re
 // CHALLAN DOCUMENTS & REPOSITORY (Month-Based Archiving)
 // ════════════════════════════════════════════════════════════
 
+const path   = require('path')
 const fs     = require('fs')
 const multer = require('multer')
 
@@ -4001,7 +3575,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' })
 })
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, process.env.API_BIND_HOST || '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`)
 });
 

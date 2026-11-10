@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Search, Download, X, FileSpreadsheet, Box } from 'lucide-react'
-import * as XLSX from 'xlsx'
-import { getAssetReport, getPlants, getDepartments } from '../data/api'
+import useReport from '../hooks/useReport'
+import useDebounced from '../hooks/useDebounced'
+import PageState from '../components/common/PageState'
+import { getAssetReport, getPlants, getDepartments, getAssetFilterOptions } from '../data/api'
 import Pagination from '../components/common/Pagination'
 
 const formatINR = v =>
@@ -22,10 +24,9 @@ const STATUS_STYLE = {
 }
 
 export default function AssetReport() {
-  const [assets,  setAssets]  = useState([])
   const [plants,  setPlants]  = useState([])
   const [depts,   setDepts]   = useState([])
-  const [loading, setLoading] = useState(true)
+  const [categoryOptions, setCategories] = useState(['All'])
 
   const [search,      setSearch]      = useState('')
   const [filterPlant, setFilterPlant] = useState('All')
@@ -33,63 +34,18 @@ export default function AssetReport() {
   const [filterDept,  setFilterDept]  = useState('All')
   const [filterStatus,setFilterStatus]= useState('All')
 
-  // Pagination states (50 multiplier options)
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize,    setPageSize]    = useState(50)
-
-  useEffect(() => {
-    Promise.all([
-      getAssetReport().catch(() => ({ data: [] })),
-      getPlants().catch(() => ({ data: [] })),
-      getDepartments().catch(() => ({ data: [] }))
-    ])
-      .then(([a, p, d]) => {
-        const raw = a?.data
-        setAssets(Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []))
-        setPlants(Array.isArray(p?.data) ? p.data : [])
-        setDepts(Array.isArray(d?.data) ? d.data : [])
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
-  }, [])
-
-  // Reset to first page when any search/filter changes
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [search, filterPlant, filterCat, filterDept, filterStatus])
-
-  const plantOptions    = ['All', ...(Array.isArray(plants) ? plants.map(p => p.name) : [])]
-  const categoryOptions = ['All', ...new Set((Array.isArray(assets) ? assets : []).map(a => a.category).filter(Boolean))]
-  const deptOptions     = ['All', ...(Array.isArray(depts) ? depts.map(d => d.name) : [])]
-  const statusOptions   = ['All', 'Active', 'Inactive', 'In Transfer', 'In Transit']
-
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase()
-    return assets.filter(a => {
-      const matchSearch = !q ||
-        a.name?.toLowerCase().includes(q) ||
-        a.asset_code?.toLowerCase().includes(q) ||
-        a.serial_number?.toLowerCase().includes(q) ||
-        a.assigned_employee?.toLowerCase().includes(q) ||
-        a.employee_name?.toLowerCase().includes(q)
-      return matchSearch &&
-        (filterPlant  === 'All' || a.plant_name === filterPlant) &&
-        (filterCat    === 'All' || a.category   === filterCat) &&
-        (filterDept   === 'All' || a.dept_name  === filterDept) &&
-        (filterStatus === 'All' || a.status     === filterStatus)
-    })
-  }, [assets, search, filterPlant, filterCat, filterDept, filterStatus])
-
-  // Pagination calculation for front-page view
-  const totalRecords = filtered.length
-  const totalPages = Math.ceil(totalRecords / pageSize) || 1
-  const validCurrentPage = Math.min(Math.max(currentPage, 1), totalPages)
-
-  const displayedAssets = useMemo(() => {
-    const start = (validCurrentPage - 1) * pageSize
-    return filtered.slice(start, start + pageSize)
-  }, [filtered, validCurrentPage, pageSize])
-
+  const debouncedSearch=useDebounced(search)
+  const filters={search:debouncedSearch,plant:filterPlant==='All'?'':filterPlant,category:filterCat==='All'?'':filterCat,department:filterDept==='All'?'':filterDept,status:filterStatus==='All'?'':filterStatus}
+  const report=useReport(getAssetReport,filters,'assets')
+  const {data:assets,total:totalRecords,loading,error,currentPage:validCurrentPage,pageSize,setCurrentPage,setPageSize,summary}=report
+  const displayedAssets=assets
+  const totalPages=Math.max(1,Math.ceil(totalRecords/pageSize))
+  useEffect(()=>{Promise.all([getPlants(),getDepartments(),getAssetFilterOptions()]).then(([p,d,f])=>{
+    setPlants(p.data);setDepts(d.data);setCategories(['All',...f.data.categories])
+  }).catch(()=>{})},[])
+  const plantOptions=['All',...new Set(plants.map(p=>p.name))]
+  const deptOptions=['All',...new Set(depts.map(d=>d.name))]
+  const statusOptions=['All','Active','Inactive','Pending Transfer','In Transfer','In Transit']
 
   const hasFilter = search || filterPlant !== 'All' || filterCat !== 'All' || filterDept !== 'All' || filterStatus !== 'All'
 
@@ -97,72 +53,33 @@ export default function AssetReport() {
     setSearch(''); setFilterPlant('All'); setFilterCat('All'); setFilterDept('All'); setFilterStatus('All')
   }
 
-  function exportExcel() {
-    const rows = filtered.map(a => ({
-      'Asset Code':              a.asset_code || '',
-      'Sub Asset Code':          `${a.asset_code || ''} ${a.sub_sequence ?? 0}`,
-      'Asset Description':       a.name || '',
-      'Category':                a.category || '',
-      'Asset Class':             a.asset_class || '',
-      'Company Code':            a.company_code || '',
-      'Cost Center':             a.cost_center || '',
-      'Cost Center Desc.':       a.cost_center_description || '',
-      'Serial Number':           a.serial_number || '',
-      'Manufacturer':            a.make || '',
-      'Acquisition Value':       a.acquisition_value != null ? Number(a.acquisition_value) : '',
-      'Plant':                   a.plant_name || '',
-      'Department':              a.dept_name || '',
-      'Assigned Employee':       a.assigned_employee || a.employee_name || '',
-      'Asset Status':            a.asset_status || '',
-      'Record Status':           a.status || '',
-      'Capitalized On':          fmtDate(a.date_of_purchase),
-      'Warranty Date':           fmtDate(a.warranty_date),
-      'Supplier':                a.supplier_name || '',
-      'Notes':                   a.notes || '',
-      'Created Date':            fmtDate(a.created_at),
-      'Last Updated':            fmtDate(a.updated_at),
-    }))
-
-    const ws = XLSX.utils.json_to_sheet(rows)
-    ws['!cols'] = [
-      { wch: 14 }, { wch: 16 }, { wch: 28 }, { wch: 16 }, { wch: 16 },
-      { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 18 }, { wch: 22 },
-      { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 14 },
-      { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 24 },
-      { wch: 14 }, { wch: 14 },
-    ]
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Asset Report')
-    XLSX.writeFile(wb, `asset-report-${new Date().toISOString().slice(0, 10)}.xlsx`)
-  }
-
-  // Summary counts
-  const total      = assets.length
-  const active     = assets.filter(a => a.status === 'Active').length
-  const inTransfer = assets.filter(a => a.status === 'In Transfer' || a.status === 'In Transit').length
-  const inactive   = assets.filter(a => a.status === 'Inactive').length
-
-  if (loading) return <div className="py-20 text-center text-sm text-ink-400">Loading asset report…</div>
+  const {exportExcel}=report
+  const total=summary.total||0,active=summary.active||0,inTransfer=summary.in_transfer||0,inactive=summary.inactive||0
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" aria-busy={loading}>
+      {error && <PageState error={error} onRetry={report.retry}/>}
+      {loading && <p role="status" className="text-sm text-brand-600">Loading report…</p>}
+      {report.exportError && <p role="alert" className="text-red-600">{report.exportError}</p>}
+      {report.exporting && <div role="status" className="text-sm">Preparing Excel for the selected filters… <button onClick={report.cancelExport} className="text-brand-600 underline">Cancel export</button></div>}
       {/* Page Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-xl font-bold text-ink-900 dark:text-gray-100">Asset Log Report</h2>
           <p className="text-xs text-ink-400 dark:text-gray-400 mt-0.5">Complete asset inventory with filters and Excel export</p>
         </div>
         <button
           onClick={exportExcel}
+          disabled={loading || report.exporting || !totalRecords}
           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-2xl text-sm font-semibold shadow-soft transition-colors"
         >
           <FileSpreadsheet size={16} />
-          Export Excel ({filtered.length})
+          {report.exporting ? 'Preparing Excel…' : `Export Excel (${totalRecords})`}
         </button>
       </div>
 
       {/* Summary tiles */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: 'Total Assets',  value: total,      color: 'bg-orange-gradient text-white' },
           { label: 'Active',        value: active,     color: 'bg-white dark:bg-gray-800 border border-cream-200 dark:border-gray-700' },
@@ -366,7 +283,7 @@ export default function AssetReport() {
           </table>
         </div>
 
-        {totalRecords === 0 && (
+        {!loading && !error && totalRecords === 0 && (
           <div className="py-16 text-center text-ink-300 dark:text-gray-500">
             <Box size={32} className="mx-auto mb-2 opacity-30" />
             <p className="text-sm">{assets.length === 0 ? 'No assets found.' : 'No assets match the selected filters.'}</p>

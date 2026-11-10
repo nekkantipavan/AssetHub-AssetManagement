@@ -5,7 +5,19 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' }
 })
 
+const lookupCache = new Map()
+function cachedLookup(path) {
+  const session = localStorage.getItem('ams_token') || sessionStorage.getItem('ams_token') || ''
+  const key = session + ':' + path
+  const previous = lookupCache.get(key)
+  if (previous && previous.expires > Date.now()) return previous.promise
+  const promise = api.get(path).catch(e => { lookupCache.delete(key); throw e })
+  lookupCache.set(key, { promise, expires: Date.now() + 30000 })
+  return promise
+}
+
 api.interceptors.request.use(config => {
+  if(config.method && config.method !== 'get') lookupCache.clear()
   const token = localStorage.getItem('ams_token') || sessionStorage.getItem('ams_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
@@ -32,32 +44,32 @@ export const getMe      = ()   => api.get('/auth/me')
 export const logoutUser = ()   => api.post('/auth/logout')
 
 // ── Assets ───────────────────────────────────────────────────
-export const getAssets              = params    => api.get('/assets', { params })
-export const getAssetFilterOptions  = ()        => api.get('/assets/filter-options')
+export const getAssets = (params, signal) => api.get('/assets', { params, signal })
+export const getAssetFilterOptions  = ()        => cachedLookup('/assets/filter-options')
 export const getAsset    = id         => api.get(`/assets/${id}`)
 export const createAsset = data       => api.post('/assets', data)
 export const updateAsset = (id, data) => api.put(`/assets/${id}`, data)
 export const deleteAsset = id         => api.delete(`/assets/${id}`)
-export const bulkUpload  = rows       => api.post('/assets/bulk', { rows })
+export const bulkUpload = payload => api.post('/assets/bulk', payload)
 
 
 // ── Plants ───────────────────────────────────────────────────
-export const getPlants    = ()         => api.get('/plants')
+export const getPlants    = ()         => cachedLookup('/plants')
 export const createPlant  = data       => api.post('/plants', data)
 export const updatePlant  = (id, data) => api.put(`/plants/${id}`, data)
 export const deletePlant  = id         => api.delete(`/plants/${id}`)
 
 // ── Departments ──────────────────────────────────────────────
-export const getDepartments   = ()         => api.get('/departments')
+export const getDepartments   = ()         => cachedLookup('/departments')
 export const createDepartment = data       => api.post('/departments', data)
 export const updateDepartment = (id, data) => api.put(`/departments/${id}`, data)
 export const deleteDepartment = id         => api.delete(`/departments/${id}`)
 
 // ── Masters lookup ───────────────────────────────────────────
-export const getMastersLookup = () => api.get('/masters/lookup')
+export const getMastersLookup = () => cachedLookup('/masters/lookup')
 
 // ── Asset Masters ────────────────────────────────────────────
-export const getAssetMastersAll = ()         => api.get('/asset-masters/all')
+export const getAssetMastersAll = ()         => cachedLookup('/asset-masters/all')
 export const getAssetMasters    = type       => api.get(`/asset-masters?type=${type}`)
 export const createAssetMaster  = data       => api.post('/asset-masters', data)
 export const updateAssetMaster  = (id, data) => api.put(`/asset-masters/${id}`, data)
@@ -101,8 +113,8 @@ export const markAllNotificationsRead= () => api.put('/notifications/read-all')
 export const markNotificationRead    = id => api.put(`/notifications/${id}/read`)
 
 // ── Reports ──────────────────────────────────────────────────
-export const getAssetReport    = () => api.get('/reports/assets')
-export const getTransferReport = () => api.get('/reports/transfers')
+export const getAssetReport = (params, signal) => api.get('/reports/assets', { params, signal })
+export const getTransferReport = (params, signal) => api.get('/reports/transfers', { params, signal })
 
 // ── Role Permissions ─────────────────────────────────────────
 export const getRolePermissions    = ()     => api.get('/role-permissions')

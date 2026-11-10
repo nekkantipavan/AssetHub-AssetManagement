@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-06T15:07:22.707Z",
+  "note": "Local warm HTTP reads, 1 warmup + 5 samples; not a load test.",
+  "results": [
+    {
+      "route": "/api/assets?pageSize=25",
+      "records": 25,
+      "total": 1200,
+      "bytes": 24989,
+      "medianMs": 7,
+      "maxMs": 7
+    },
+    {
+      "route": "/api/reports/assets?pageSize=50",
+      "records": 1200,
+      "total": 1200,
+      "bytes": 1169340,
+      "medianMs": 54,
+      "maxMs": 63
+    },
+    {
+      "route": "/api/reports/transfers?pageSize=25",
+      "records": 5,
+      "total": 5,
+      "bytes": 7087,
+      "medianMs": 5,
+      "maxMs": 7
+    }
+  ]
+}

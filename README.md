@@ -2,6 +2,10 @@
 
 A modern, warm-toned frontend built with **React + Vite + Tailwind CSS**.
 
+## Bulk import and Excel reports
+
+Asset Report exports include all bulk-import fields plus report columns. Re-import with Update existing, Create new, or Create and update; review changes before committing. See [the bulk upload guide](docs/BULK_UPLOAD.md) for blank-cell rules, conflict checks, deployment and verification.
+
 ---
 
 ## 📁 Folder Structure
@@ -19,7 +23,7 @@ asset-management/
 │   ├── pages/
 │   │   ├── Dashboard.jsx    # Charts + stat cards
 │   │   ├── Assets.jsx       # Full table + View/Edit/History modals
-│   │   ├── BulkUpload.jsx   # Upload + error modal
+│   │   ├── BulkUpload.jsx   # Preview + bulk create/update
 │   │   ├── Transfer.jsx     # Transfer form + history
 │   │   ├── Plants.jsx       # Plant CRUD
 │   │   ├── Departments.jsx  # Department CRUD

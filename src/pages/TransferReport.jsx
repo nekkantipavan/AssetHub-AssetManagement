@@ -1,6 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Search, Download, X, FileSpreadsheet, ArrowLeftRight, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react'
-import * as XLSX from 'xlsx'
+import useReport from '../hooks/useReport'
+import useDebounced from '../hooks/useDebounced'
+import PageState from '../components/common/PageState'
+import Pagination from '../components/common/Pagination'
 import { getTransferReport } from '../data/api'
 
 const fmtDate = v => {
@@ -151,38 +154,19 @@ function TransferRow({ t }) {
 }
 
 export default function TransferReport() {
-  const [transfers, setTransfers] = useState([])
-  const [loading,   setLoading]   = useState(true)
 
   const [search,      setSearch]      = useState('')
   const [filterType,  setFilterType]  = useState('All')
   const [filterStatus,setFilterStatus]= useState('All')
   const [dateFrom,    setDateFrom]    = useState('')
 
-  useEffect(() => {
-    getTransferReport()
-      .then(r => { setTransfers(r.data); setLoading(false) })
-      .catch(() => setLoading(false))
-  }, [])
-
-  const typeOptions   = ['All', 'Returnable', 'Non-Returnable']
-  const statusOptions = ['All', 'Pending Approval', 'In Transit', 'Partially Returned', 'Completed', 'Rejected']
-
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase()
-    return transfers.filter(t => {
-      const matchSearch = !q ||
-        t.transfer_code?.toLowerCase().includes(q) ||
-        t.from_plant_name?.toLowerCase().includes(q) ||
-        t.to_plant_name?.toLowerCase().includes(q) ||
-        t.initiated_by_name?.toLowerCase().includes(q)
-      const matchDate = !dateFrom || new Date(t.created_at) >= new Date(dateFrom)
-      return matchSearch &&
-        (filterType   === 'All' || t.transfer_type === filterType) &&
-        (filterStatus === 'All' || t.status        === filterStatus) &&
-        matchDate
-    })
-  }, [transfers, search, filterType, filterStatus, dateFrom])
+  const debouncedSearch=useDebounced(search)
+  const filters={search:debouncedSearch,type:filterType==='All'?'':filterType,status:filterStatus==='All'?'':filterStatus,dateFrom}
+  const report=useReport(getTransferReport,filters,'transfers',25)
+  const {data:transfers,loading,error,summary}=report
+  const filtered=transfers
+  const typeOptions=['All','Returnable','Non-Returnable']
+  const statusOptions=['All','Pending Approval','In Transit','Partially Returned','Completed','Rejected']
 
   const hasFilter = search || filterType !== 'All' || filterStatus !== 'All' || dateFrom
 
@@ -190,117 +174,33 @@ export default function TransferReport() {
     setSearch(''); setFilterType('All'); setFilterStatus('All'); setDateFrom('')
   }
 
-  function exportExcel() {
-    // Sheet 1: Transfers
-    const transferRows = filtered.map(t => ({
-      'Transfer Code':       t.transfer_code,
-      'Type':                t.transfer_type,
-      'From Plant':          t.from_plant_name || '',
-      'To Plant':            t.to_plant_name || '',
-      'Asset Count':         t.asset_count,
-      'Status':              t.status,
-      'Initiated By':        t.initiated_by_name || '',
-      'Created Date':        fmtDate(t.created_at),
-      'Expected Return':     fmtDate(t.expected_return_date),
-      'Approved By':         t.approved_by_name || '',
-      'Approved At':         fmtDate(t.approved_at),
-      'Return Count':        t.return_count,
-      'Notes':               t.notes || '',
-    }))
-
-    // Sheet 2: Transfer Assets (flat)
-    const assetRows = []
-    filtered.forEach(t => {
-      t.items.forEach(item => {
-        assetRows.push({
-          'Transfer Code': t.transfer_code,
-          'Transfer Type': t.transfer_type,
-          'Transfer Status': t.status,
-          'From Plant':    t.from_plant_name || '',
-          'To Plant':      t.to_plant_name || '',
-          'Asset Code':    item.asset_code || '',
-          'Sub Asset Code':`${item.asset_code || ''} ${item.sub_sequence ?? 0}`,
-          'Asset Name':    item.name,
-          'Category':      item.category || '',
-          'Asset Class':   item.asset_class || '',
-          'Serial No.':    item.serial_number || '',
-          'Value (₹)':     item.acquisition_value != null ? Number(item.acquisition_value) : '',
-          'Department':    item.dept_name || '',
-          'Assigned To':   item.assigned_employee || '',
-          'Transfer Date': fmtDate(t.created_at),
-        })
-      })
-    })
-
-    // Sheet 3: Returns (flat)
-    const returnRows = []
-    filtered.forEach(t => {
-      t.returns.forEach(r => {
-        returnRows.push({
-          'Transfer Code':   t.transfer_code,
-          'Transfer Type':   t.transfer_type,
-          'From Plant':      t.from_plant_name || '',
-          'To Plant':        t.to_plant_name || '',
-          'Return Code':     r.return_code,
-          'Return Date':     fmtDate(r.return_date),
-          'Returned By':     r.returned_by || '',
-          'Assets Returned': r.returned_asset_count,
-          'Approval Status': r.approval_status || r.status || '',
-          'Approved By':     r.approved_by_name || '',
-          'Approved At':     fmtDate(r.approved_at),
-          'Notes':           r.notes || '',
-        })
-      })
-    })
-
-    const wb = XLSX.utils.book_new()
-
-    const ws1 = XLSX.utils.json_to_sheet(transferRows)
-    ws1['!cols'] = [{ wch:16 },{ wch:16 },{ wch:18 },{ wch:18 },{ wch:10 },{ wch:18 },{ wch:18 },{ wch:14 },{ wch:16 },{ wch:18 },{ wch:14 },{ wch:12 },{ wch:24 }]
-    XLSX.utils.book_append_sheet(wb, ws1, 'Transfers')
-
-    if (assetRows.length > 0) {
-      const ws2 = XLSX.utils.json_to_sheet(assetRows)
-      ws2['!cols'] = [{ wch:16 },{ wch:16 },{ wch:18 },{ wch:18 },{ wch:18 },{ wch:14 },{ wch:16 },{ wch:28 },{ wch:14 },{ wch:14 },{ wch:18 },{ wch:12 },{ wch:18 },{ wch:22 },{ wch:14 }]
-      XLSX.utils.book_append_sheet(wb, ws2, 'Transfer Assets')
-    }
-
-    if (returnRows.length > 0) {
-      const ws3 = XLSX.utils.json_to_sheet(returnRows)
-      ws3['!cols'] = [{ wch:16 },{ wch:16 },{ wch:18 },{ wch:18 },{ wch:16 },{ wch:14 },{ wch:18 },{ wch:14 },{ wch:16 },{ wch:18 },{ wch:14 },{ wch:24 }]
-      XLSX.utils.book_append_sheet(wb, ws3, 'Returns')
-    }
-
-    XLSX.writeFile(wb, `transfer-report-${new Date().toISOString().slice(0, 10)}.xlsx`)
-  }
-
-  // Summary
-  const totalTransfers    = transfers.length
-  const returnable        = transfers.filter(t => t.transfer_type === 'Returnable').length
-  const nonReturnable     = transfers.filter(t => t.transfer_type === 'Non-Returnable').length
-  const totalReturns      = transfers.reduce((s, t) => s + t.return_count, 0)
-
-  if (loading) return <div className="py-20 text-center text-sm text-ink-400">Loading transfer report…</div>
+  const {exportExcel}=report
+  const totalTransfers=summary.total||0,returnable=summary.returnable||0,nonReturnable=summary.non_returnable||0,totalReturns=summary.returns||0
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" aria-busy={loading}>
+      {error && <PageState error={error} onRetry={report.retry}/>}
+      {loading && <p role="status" className="text-sm text-brand-600">Loading report…</p>}
+      {report.exportError && <p role="alert" className="text-red-600">{report.exportError}</p>}
+      {report.exporting && <div role="status">Preparing Excel… <button onClick={report.cancelExport} className="text-brand-600 underline">Cancel export</button></div>}
       {/* Page Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-xl font-bold text-ink-900 dark:text-gray-100">Transfer Report</h2>
           <p className="text-xs text-ink-400 dark:text-gray-400 mt-0.5">All transfer records with assets and return details — click any row to expand</p>
         </div>
         <button
           onClick={exportExcel}
+          disabled={loading || report.exporting || !report.total}
           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-2xl text-sm font-semibold shadow-soft transition-colors"
         >
           <FileSpreadsheet size={16} />
-          Export Excel ({filtered.length})
+          {report.exporting ? 'Preparing Excel…' : `Export Excel (${report.total})`}
         </button>
       </div>
 
       {/* Summary tiles */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: 'Total Transfers',   value: totalTransfers, color: 'bg-orange-gradient text-white' },
           { label: 'Returnable',        value: returnable,     color: 'bg-white dark:bg-gray-800 border border-cream-200 dark:border-gray-700' },
@@ -362,7 +262,7 @@ export default function TransferReport() {
       <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-card overflow-hidden">
         <div className="px-6 py-4 border-b border-cream-200 dark:border-gray-700">
           <h3 className="text-sm font-bold text-ink-900 dark:text-gray-100">Transfer Records</h3>
-          <p className="text-xs text-ink-300 dark:text-gray-400 mt-0.5">{filtered.length} of {transfers.length} transfers — click a row to see asset and return details</p>
+          <p className="text-xs text-ink-300 dark:text-gray-400 mt-0.5">{filtered.length} of {report.total} matching transfers — click a row to see asset and return details</p>
         </div>
 
         <div className="overflow-x-auto">
@@ -382,13 +282,14 @@ export default function TransferReport() {
           </table>
         </div>
 
-        {filtered.length === 0 && (
+        {!loading && !error && filtered.length === 0 && (
           <div className="py-16 text-center text-ink-300 dark:text-gray-500">
             <ArrowLeftRight size={32} className="mx-auto mb-2 opacity-30" />
             <p className="text-sm">{transfers.length === 0 ? 'No transfers found.' : 'No transfers match the selected filters.'}</p>
           </div>
         )}
       </div>
+      <Pagination totalItems={report.total} currentPage={report.currentPage} pageSize={report.pageSize} onPageChange={report.setCurrentPage} onPageSizeChange={report.setPageSize}/>
     </div>
   )
 }

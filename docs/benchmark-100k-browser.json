@@ -1,0 +1,32 @@
+{
+  "uiTimes": {
+    "assets": 747,
+    "status": 183,
+    "serial": 434,
+    "report": 214,
+    "detailWithPhotos": 438,
+    "detailWithoutPhotos": 911
+  },
+  "photoNav": {
+    "withPhotos": [
+      334,
+      307,
+      283
+    ],
+    "withoutPhotos": [
+      345,
+      316,
+      279
+    ]
+  },
+  "bulkPreview": {
+    "rows": 5000,
+    "unchanged": 5000,
+    "errors": 0
+  },
+  "mobileViewport": {
+    "width": 390,
+    "height": 844
+  },
+  "photoUpload": true
+}
