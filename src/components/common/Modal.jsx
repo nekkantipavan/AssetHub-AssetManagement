@@ -2,7 +2,7 @@ import { useEffect, useRef, useId } from 'react'
 import { X } from 'lucide-react'
 import clsx from 'clsx'
 
-export default function Modal({ isOpen, onClose, title, children, size = 'md' }) {
+export default function Modal({ isOpen, onClose, title, children, size = 'md', bottom = false }) {
   const dialog = useRef()
   const close = useRef(onClose)
   close.current = onClose
@@ -20,7 +20,8 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' })
   return <dialog ref={dialog} aria-labelledby={titleId}
     onCancel={e => { e.preventDefault(); close.current() }}
     onClick={e => { if (e.target === e.currentTarget) close.current() }}
-    className={clsx('m-auto w-[calc(100%-2rem)] border-0 p-0 rounded-3xl bg-white dark:bg-gray-800 text-ink-900 dark:text-gray-100 shadow-medium backdrop:bg-black/40 backdrop:backdrop-blur-sm', sizes[size])}>
+    className={clsx('border-0 p-0 bg-white dark:bg-gray-800 text-ink-900 dark:text-gray-100 shadow-medium backdrop:bg-black/40 backdrop:backdrop-blur-sm',
+      bottom ? 'fixed inset-x-0 bottom-0 top-auto mx-auto mb-0 mt-auto w-full rounded-t-3xl' : 'm-auto w-[calc(100%-2rem)] rounded-3xl', sizes[size])}>
     <div className="flex flex-col max-h-[90dvh]">
       <div className="flex items-center justify-between px-6 py-4 border-b border-cream-200 dark:border-gray-700 flex-shrink-0">
         <h2 id={titleId} className="text-base font-bold">{title}</h2>

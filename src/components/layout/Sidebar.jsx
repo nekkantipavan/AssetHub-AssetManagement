@@ -1,8 +1,8 @@
-import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Box, Upload, ArrowLeftRight,
   Building2, Layers, Tag, Mail, Users, ScrollText,
-  LogOut, Plus, List, FileBox, FileText, ShieldCheck, ClipboardList, Receipt, FolderArchive
+  X, Plus, List, FileBox, FileText, ShieldCheck, ClipboardList, Receipt, FolderArchive
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuth } from '../../context/AuthContext'
@@ -34,12 +34,6 @@ const allSystemItems = [
   { label:'Challan Vault',    icon:FolderArchive, path:'/challans',         page:'transfer'         },
 ]
 
-const roleColors = {
-  Admin:   'bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-400',
-  Manager: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
-  User:    'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
-}
-
 function NavItem({ item }) {
   return (
     <NavLink
@@ -56,8 +50,7 @@ function NavItem({ item }) {
 }
 
 export default function Sidebar({ open = false, onClose = () => {} }) {
-  const { user, logout, canAccess } = useAuth()
-  const navigate  = useNavigate()
+  const { canAccess } = useAuth()
   const location  = useLocation()
 
   const visible = items => items.filter(i => canAccess(i.page) !== false)
@@ -70,23 +63,12 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
   const showTransfer = canAccess('transfer') !== false
   const isTransferActive = location.pathname.startsWith('/transfer')
 
-  function handleLogout() { logout(); navigate('/login') }
-
-  const initials = user?.name?.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() || '??'
-
   return (
     <aside aria-label="Main navigation" onClick={e => { if (e.target.closest('a')) onClose() }} className={clsx("fixed inset-y-0 left-0 z-40 md:static w-56 flex-shrink-0 bg-white dark:bg-gray-800 flex flex-col shadow-soft overflow-y-auto border-r border-cream-200 dark:border-gray-700 transition-transform", open ? "translate-x-0" : "-translate-x-full md:translate-x-0")}>
-      {/* Logo */}
-      <div className="px-5 py-4 border-b border-cream-200 dark:border-gray-700">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-orange-gradient flex items-center justify-center shadow-soft">
-            <Box size={16} className="text-white" strokeWidth={2.5}/>
-          </div>
-          <div>
-            <p className="text-sm font-bold text-ink-900 dark:text-gray-100 leading-none">AssetHub</p>
-            <p className="text-xs text-ink-300 dark:text-gray-500 mt-0.5">Management System</p>
-          </div>
-        </div>
+      <div className="flex items-center justify-between border-b border-cream-200 px-4 py-3 dark:border-gray-700 md:hidden">
+        <p className="text-sm font-semibold">Navigation</p>
+        <button type="button" aria-label="Close navigation" onClick={onClose}
+          className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-cream-100 dark:hover:bg-gray-700"><X size={18}/></button>
       </div>
 
       {/* Navigation */}
@@ -162,27 +144,6 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
         )}
       </nav>
 
-      {/* User card + logout */}
-      <div className="px-3 pb-4 space-y-1.5">
-        <div className="bg-cream-100 dark:bg-gray-700 rounded-xl p-2.5 flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-orange-gradient flex items-center justify-center text-white text-xs font-bold shadow-soft flex-shrink-0">
-            {initials}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-ink-900 dark:text-gray-100 truncate">{user?.name}</p>
-            <span className={clsx('text-xs font-medium px-1.5 py-0.5 rounded-lg', roleColors[user?.role])}>
-              {user?.role}
-            </span>
-          </div>
-        </div>
-        <button onClick={handleLogout}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium
-                     text-ink-500 dark:text-gray-400 hover:bg-red-50 dark:hover:bg-red-900/20
-                     hover:text-red-500 transition-all duration-200">
-          <LogOut size={15}/>
-          Sign out
-        </button>
-      </div>
     </aside>
   )
 }

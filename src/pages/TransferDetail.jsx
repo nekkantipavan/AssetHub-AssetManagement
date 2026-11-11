@@ -107,9 +107,7 @@ function TransferChallanButton({ transfer, settings }) {
       transferType: transfer.transfer_type,
       items: transfer.items || [],
       approvedDate: transfer.approved_at ? new Date(transfer.approved_at).toLocaleDateString('en-IN') : null,
-      label: transfer.transfer_type === 'Returnable'
-        ? 'Returnable Delivery Challan'
-        : 'Non Returnable Delivery Challan',
+      type: transfer.transfer_type === 'Returnable' ? 'returnable' : 'nonReturnable',
       ...templateOpts(settings),
     })
   }
@@ -132,7 +130,7 @@ function ReturnChallanButton({ transfer, ret, settings }) {
       transferType: ret.status === 'Completed' ? 'Full Return' : 'Partial Return',
       items,
       approvedDate: ret.approved_at ? new Date(ret.approved_at).toLocaleDateString('en-IN') : null,
-      label: 'Return Delivery Challan',
+      type: 'return',
       ...templateOpts(settings),
     })
   }

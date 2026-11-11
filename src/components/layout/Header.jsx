@@ -1,6 +1,6 @@
 import GlobalSearch from './GlobalSearch'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { Search, Bell, ChevronDown, LogOut, KeyRound, CheckCheck, CheckCircle, XCircle, RotateCcw } from 'lucide-react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Menu, Bell, ChevronDown, LogOut, KeyRound, CheckCheck, CheckCircle, XCircle, RotateCcw } from 'lucide-react'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import ChangePasswordModal from '../common/ChangePasswordModal'
@@ -21,6 +21,7 @@ const pageTitles = {
   '/reports/assets':     { title:'Asset Report',      sub:'Asset inventory report'      },
   '/reports/transfers':  { title:'Transfer Report',   sub:'Transfer records report'     },
   '/role-management':    { title:'Role Management',   sub:'Configure role permissions'  },
+  '/challan-settings':   { title:'Challan Settings',   sub:'Challan Studio'              },
   '/challans':           { title:'Challan Vault',   sub:'Document Repository'         },
 }
 
@@ -105,7 +106,7 @@ function NotificationPanel({ notifications, onMarkAll, onMarkOne, onNavigate, on
   )
 }
 
-export default function Header() {
+export default function Header({ navOpen = false, onOpenNavigation }) {
   const { pathname } = useLocation()
   const { user, logout, canAccess } = useAuth()
   const navigate = useNavigate()
@@ -186,19 +187,29 @@ export default function Header() {
 
   return (
     <>
-      <header className="bg-white dark:bg-gray-800 border-b border-cream-200 dark:border-gray-700 px-3 sm:px-6 py-3 flex items-center justify-between gap-2 flex-shrink-0 relative z-20">
-        <div>
-          <h1 className="text-base font-bold dark:text-white leading-none">{page.title}</h1>
-          <p className="text-xs text-ink-300 dark:text-gray-400 mt-0.5">{page.sub || `Welcome, ${user?.name?.split(' ')[0]}`}</p>
+      <header className="relative z-20 grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 border-b border-cream-200 bg-white px-4 py-3 shadow-soft dark:border-gray-700 dark:bg-gray-800 sm:px-5 md:grid-cols-[minmax(0,1fr)_minmax(240px,40%)_minmax(0,1fr)] md:gap-x-6 lg:px-6">
+        <div className="flex min-w-0 items-center gap-2">
+          <button type="button" aria-label="Open navigation" aria-expanded={navOpen} onClick={onOpenNavigation}
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-ink-600 hover:bg-cream-100 dark:text-gray-300 dark:hover:bg-gray-700 md:hidden"><Menu size={20}/></button>
+          <Link to="/dashboard" aria-label="AssetHub home" className="shrink-0 rounded-lg focus-visible:outline-brand-500">
+            <img src="/assethub-mark.svg" alt="" width="44" height="44" className="h-11 w-11"/>
+          </Link>
+          <div className="min-w-0">
+            <Link to="/dashboard" aria-label="AssetHub dashboard" className="text-[22px] font-bold leading-none tracking-[-0.045em] text-ink-900 dark:text-white">Asset<span className="text-brand-600 dark:text-brand-400">Hub</span></Link>
+            <h1 title={page.sub} className="mt-1 truncate text-[11px] font-medium leading-tight tracking-wide text-ink-500 dark:text-gray-400">{page.title}</h1>
+          </div>
+        </div>
+        <div className="col-span-2 row-start-2 mx-auto w-full max-w-[560px] min-w-0 md:col-span-1 md:col-start-2 md:row-start-1">
+          <GlobalSearch />
         </div>
 
-        <div className="flex items-center gap-3">
-          <GlobalSearch />
+        <div className="col-start-2 row-start-1 flex shrink-0 items-center justify-self-end gap-2 sm:gap-3 md:col-start-3">
 
           {/* Notifications bell */}
           {canViewNotifs && (
             <div className="relative" ref={notifRef}>
               <button
+                aria-label="Notifications"
                 onClick={() => setNotifOpen(v => !v)}
                 className="relative w-9 h-9 bg-cream-100 dark:bg-gray-700 rounded-2xl flex items-center justify-center hover:bg-cream-200 dark:hover:bg-gray-600 transition-colors"
               >
@@ -225,13 +236,15 @@ export default function Header() {
           {/* Profile dropdown */}
           <div className="relative">
             <button
+              aria-label="Account menu"
+              aria-expanded={dropOpen}
               onClick={() => setDropOpen(v => !v)}
               className="flex items-center gap-2 bg-cream-100 dark:bg-gray-700 hover:bg-cream-200 dark:hover:bg-gray-600 rounded-2xl px-3 py-2 transition-colors"
             >
               <div className="w-7 h-7 rounded-xl bg-orange-gradient flex items-center justify-center text-white text-xs font-bold">
                 {initials}
               </div>
-              <div className="text-left hidden sm:block">
+              <div className="text-left hidden lg:block">
                 <p className="text-xs font-semibold dark:text-white leading-none">{user?.name}</p>
                 <span className={clsx('text-xs font-medium px-1 rounded', roleColors[user?.role])}>{user?.role}</span>
               </div>

@@ -1,7 +1,8 @@
 import BarcodeRenderer from './BarcodeRenderer'
 import QrCodeRenderer from './QrCodeRenderer'
+import { LABEL_TEMPLATES } from './labelLayout'
 
-export default function AssetLabel({
+function LabelContent({
   asset,
   template = 'standard',
   options = {
@@ -49,9 +50,9 @@ export default function AssetLabel({
             {options.companyName || 'ASSET TAG'}
           </div>
         )}
-        <div className="my-auto py-1">
+        {options.showQr && <div className="my-auto py-1">
           <QrCodeRenderer value={qrCodeValue} size={64} level="M" />
-        </div>
+        </div>}
         <div className="w-full">
           <div className="font-mono font-black text-xs tracking-tight truncate leading-tight">
             {fullCode}
@@ -70,14 +71,14 @@ export default function AssetLabel({
       <div className="asset-label-box bg-white text-black border-2 border-black p-2.5 rounded-sm flex flex-col justify-between select-none"
            style={{ width: '280px', height: '185px', boxSizing: 'border-box' }}>
         {/* Header */}
-        <div className="flex items-center justify-between border-b-2 border-black pb-1 mb-1">
-          <div className="text-[11px] font-black tracking-wider uppercase">
+        {options.showCompany && <div className="flex items-center justify-between gap-2 border-b-2 border-black pb-1 mb-1">
+          <div className="min-w-0 truncate text-[11px] font-black tracking-wider uppercase">
             {options.companyName || 'PROPERTY OF ASSET MANAGEMENT'}
           </div>
           <span className="text-[9px] font-bold bg-black text-white px-1 py-0.2 rounded-xs">
             FIXED ASSET
           </span>
-        </div>
+        </div>}
 
         {/* Content Row: QR Code + Details */}
         <div className="flex items-start gap-2.5 my-1">
@@ -115,6 +116,7 @@ export default function AssetLabel({
                 <span>{[plantName, deptName].filter(Boolean).join(' / ')}</span>
               </div>
             )}
+            {options.showAssigned && assigned && <div className="truncate text-[9px]">User: {assigned}</div>}
           </div>
         </div>
 
@@ -139,11 +141,12 @@ export default function AssetLabel({
             {options.companyName || 'ASSET MANAGEMENT'}
           </div>
         )}
-        <div className="my-auto">
+        {options.showBarcode && <div className="my-auto">
           <BarcodeRenderer value={barcodeValue} height={28} width={1.3} fontSize={10} displayValue={true} />
-        </div>
+        </div>}
+        {!options.showBarcode && <div className="font-mono text-xs font-bold">{fullCode}</div>}
         <div className="text-[9px] font-semibold text-gray-900 truncate">
-          {assetName} {serialNo && serialNo !== '—' ? `· SN: ${serialNo}` : ''}
+          {assetName} {options.showSerial && serialNo && serialNo !== '—' ? `· SN: ${serialNo}` : ''}
         </div>
       </div>
     )
@@ -191,6 +194,7 @@ export default function AssetLabel({
               User: {assigned}
             </div>
           )}
+          {options.showCategory && category && <div className="truncate text-[7.5px] leading-none text-gray-600 mt-0.5">{category}</div>}
         </div>
       </div>
 
@@ -204,6 +208,18 @@ export default function AssetLabel({
           DO NOT REMOVE
         </div>
       )}
+    </div>
+  )
+}
+
+export default function AssetLabel(props) {
+  const size = LABEL_TEMPLATES[props.template] || LABEL_TEMPLATES.standard
+  const scale = Math.min(size.width * 96 / 25.4 / size.canvasWidth, size.height * 96 / 25.4 / size.canvasHeight)
+  return (
+    <div className="asset-label-physical" style={{ width: size.width + 'mm', height: size.height + 'mm', overflow: 'hidden', background: '#fff', flexShrink: 0 }}>
+      <div style={{ width: size.canvasWidth, height: size.canvasHeight, transform: 'scale(' + scale + ')', transformOrigin: 'top left' }}>
+        <LabelContent {...props}/>
+      </div>
     </div>
   )
 }

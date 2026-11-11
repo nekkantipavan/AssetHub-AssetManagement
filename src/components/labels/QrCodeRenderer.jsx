@@ -4,7 +4,7 @@ export default function QrCodeRenderer({
   value,
   size = 72,
   level = 'M',
-  includeMargin = false,
+  includeMargin = true,
   className = ''
 }) {
   if (!value) return null
